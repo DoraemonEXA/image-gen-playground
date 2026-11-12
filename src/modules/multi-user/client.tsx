@@ -22,6 +22,7 @@ type Runtime = {
     isCurrent: () => boolean;
 };
 const Context = React.createContext<Runtime | null>(null);
+const ACCOUNT_REFRESH_INTERVAL_MS = 60_000;
 export const usd = (units: number = 0) => `$${(units / 10_000).toFixed(4)}`;
 
 export function announceSessionChange() {
@@ -69,8 +70,9 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
     const identity = React.useRef<string | null>(null);
     const invalid = React.useRef(false);
     const requests = React.useRef(new Set<AbortController>());
+    const lastRefreshed = React.useRef(0);
+    const activeRefreshes = React.useRef(0);
     const [blocked, setBlocked] = React.useState(false);
-    const [checking, setChecking] = React.useState(false);
     const invalidate = React.useCallback(() => {
         invalid.current = true;
         requests.current.forEach((controller) => controller.abort());
@@ -78,13 +80,21 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
         window.location.replace('/login');
     }, []);
     const refresh = React.useCallback(async () => {
-        const next = await api<AccountState>('auth/me');
-        if (!next.user || (identity.current && identity.current !== next.user.sessionId)) {
-            invalidate();
-            return;
+        if (invalid.current) return;
+        activeRefreshes.current++;
+        try {
+            const next = await api<AccountState>('auth/me');
+            if (invalid.current) return;
+            if (!next.user || (identity.current && identity.current !== next.user.sessionId)) {
+                invalidate();
+                return;
+            }
+            identity.current = next.user.sessionId;
+            lastRefreshed.current = Date.now();
+            setAccount(next);
+        } finally {
+            activeRefreshes.current--;
         }
-        identity.current = next.user.sessionId;
-        setAccount(next);
     }, [invalidate]);
 
     React.useEffect(() => {
@@ -111,13 +121,14 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
         const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('playground-session');
         if (channel) channel.onmessage = invalidate;
         const check = () => {
+            // Automatic checks share a freshness window; explicit post-action refreshes stay immediate.
+            if (
+                document.visibilityState !== 'visible' ||
+                activeRefreshes.current > 0 ||
+                Date.now() - lastRefreshed.current < ACCOUNT_REFRESH_INTERVAL_MS
+            )
+                return;
             refresh().catch(() => setError('Session verification failed. Reload to continue.'));
-        };
-        const checkOnFocus = () => {
-            setChecking(true);
-            refresh()
-                .then(() => setChecking(false))
-                .catch(() => setError('Session verification failed. Reload to continue.'));
         };
         const onStorage = (event: StorageEvent) => {
             if (event.key === 'playground-session-event') invalidate();
@@ -125,15 +136,15 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
         const onPageShow = (event: PageTransitionEvent) => {
             if (event.persisted) invalidate();
         };
-        const timer = setInterval(check, 60_000);
-        window.addEventListener('focus', checkOnFocus);
+        const timer = setInterval(check, ACCOUNT_REFRESH_INTERVAL_MS);
+        window.addEventListener('focus', check);
         window.addEventListener('storage', onStorage);
         window.addEventListener('pageshow', onPageShow);
         return () => {
             clearInterval(timer);
             channel?.close();
             controllers.forEach((controller) => controller.abort());
-            window.removeEventListener('focus', checkOnFocus);
+            window.removeEventListener('focus', check);
             window.removeEventListener('storage', onStorage);
             window.removeEventListener('pageshow', onPageShow);
         };
@@ -224,12 +235,7 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
     };
     return (
         <Context.Provider value={runtime}>
-            {checking && (
-                <p className='p-4' role='status'>
-                    {t('Verifying session…')}
-                </p>
-            )}
-            <div hidden={checking}>
+            <div>
                 {mode === 'multi-user' && (
                     <header className='border-border bg-background text-foreground flex flex-wrap items-center gap-5 border-b px-6 py-3 text-sm'>
                         <Link href='/'>{t('Playground')}</Link>

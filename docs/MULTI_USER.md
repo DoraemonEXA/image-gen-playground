@@ -35,6 +35,8 @@ The container starts as an unprivileged user. Named volumes persist account data
 
 All accounts, including the administrator, use the same API key and balance. There are no personal credit allocations.
 
+Automatic balance/session checks run in the background at most once per minute while the page is visible. Returning to a recently checked tab keeps the playground visible without another request; returning after a minute allows a fresh check. Generation and admin balance changes still refresh the balance immediately, and cross-tab sign-out notifications still invalidate the session immediately.
+
 - **Add funds** adds a positive amount. **Set remaining balance** records the difference from the current balance. Both require a reason and create ledger entries. A set operation is rejected if the form's balance revision is stale.
 - Charges use the upstream token-cost calculator, including SVG writer usage, and are stored as integer units of $0.0001. The ledger is an application estimate; it is not synchronized with the provider's billing system or spending outside this app.
 - Provider usage is recorded before image persistence and response delivery. A paid operation can therefore be charged even if saving or downloading its image fails.

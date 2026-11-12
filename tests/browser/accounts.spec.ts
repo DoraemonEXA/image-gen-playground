@@ -1,3 +1,4 @@
+import { png } from '../mock-provider';
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
@@ -21,6 +22,11 @@ test('bootstrap, funding, account provisioning, private generations, logout and 
         }
     }).trim();
     await page.goto(link);
+    await page.getByLabel('Language', { exact: true }).selectOption('zh-CN');
+    await expect(page.getByRole('heading', { name: '设置管理员', exact: true })).toBeVisible();
+    await page.getByLabel('主题', { exact: true }).selectOption('dark');
+    await page.screenshot({ path: '.cache/setup-zh-dark.png', fullPage: true });
+    await page.getByLabel('语言', { exact: true }).selectOption('en');
     await page.getByLabel('Admin username').fill('owner');
     await page.getByRole('button', { name: 'Generate authenticator QR' }).click();
     const secret = await page.locator('code').innerText();
@@ -83,6 +89,53 @@ test('bootstrap, funding, account provisioning, private generations, logout and 
     await expect(alice.locator('button[type="submit"]').filter({ hasText: /^Generate$/ })).toBeEnabled();
     await alice.screenshot({ path: '.cache/playground-preview.png', fullPage: true });
 
+    await alice.getByLabel('Language', { exact: true }).selectOption('zh-CN');
+    await alice.getByLabel('主题', { exact: true }).selectOption('light');
+    await expect(alice.locator('html')).toHaveAttribute('lang', 'zh-CN');
+    await alice.getByRole('button', { name: '查看提示词', exact: true }).first().click();
+    await expect(alice.getByRole('dialog')).toContainText('生成这组图片所使用的完整提示词。');
+    await alice.screenshot({ path: '.cache/history-zh-light.png', fullPage: true });
+    await alice.keyboard.press('Escape');
+    await alice.getByRole('button', { name: '删除历史记录', exact: true }).first().click();
+    await expect(alice.getByRole('dialog')).toContainText('不再询问');
+    await alice.getByRole('button', { name: '取消', exact: true }).click();
+    await alice.getByRole('tab', { name: '编辑', exact: true }).click();
+    await expect
+        .poll(() =>
+            alice
+                .getByRole('tab', { name: '编辑', exact: true })
+                .evaluate(
+                    (element) => getComputedStyle(element).backgroundColor === getComputedStyle(document.body).color
+                )
+        )
+        .toBe(true);
+    await alice.getByRole('textbox', { name: '提示词', exact: true }).fill('给图片添加蓝色边框');
+    await alice
+        .locator('input[type=file]')
+        .first()
+        .setInputFiles({ name: 'source.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
+    await alice.getByRole('checkbox', { name: '启用流式预览' }).uncheck();
+    const edited = alice.waitForResponse(
+        (response) => response.url().endsWith('/api/images') && response.request().method() === 'POST'
+    );
+    await alice.getByRole('button', { name: '编辑图片', exact: true }).click();
+    expect((await edited).ok()).toBe(true);
+    await expect(alice.getByText('共享余额：', { exact: false })).toContainText('$1.9667');
+    await alice.screenshot({ path: '.cache/edit-zh-light.png', fullPage: true });
+    await alice.getByLabel('主题', { exact: true }).selectOption('dark');
+    await expect
+        .poll(() =>
+            alice
+                .getByRole('tab', { name: '编辑', exact: true })
+                .evaluate(
+                    (element) => getComputedStyle(element).backgroundColor === getComputedStyle(document.body).color
+                )
+        )
+        .toBe(true);
+    await alice.setViewportSize({ width: 390, height: 844 });
+    await alice.screenshot({ path: '.cache/edit-zh-dark-mobile.png', fullPage: true });
+    await alice.getByLabel('语言', { exact: true }).selectOption('en');
+
     const sameBrowserTab = await aliceContext.newPage();
     await sameBrowserTab.goto('/');
     await expect(sameBrowserTab.locator('img[src*="/api/image/"]').first()).toBeVisible();
@@ -97,8 +150,16 @@ test('bootstrap, funding, account provisioning, private generations, logout and 
     const anonymous = await alice.request.get(`/api/image/${result.images[0].filename}`);
     expect(anonymous.status()).toBe(401);
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Shared balance: $1.9778' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Shared balance: $1.9667' })).toBeVisible();
     await expect(page.getByText('A private blue square')).toHaveCount(0);
+    await page.getByLabel('Language', { exact: true }).selectOption('zh-CN');
+    await page.getByLabel('主题', { exact: true }).selectOption('light');
+    await expect(page.getByRole('heading', { name: '管理后台', exact: true })).toBeVisible();
+    await page.screenshot({ path: '.cache/admin-zh-light.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.getByLabel('主题', { exact: true }).selectOption('dark');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: '.cache/admin-zh-dark-mobile.png', fullPage: true });
     expect(consoleErrors).toEqual([]);
     await secondContext.close();
     await aliceContext.close();

@@ -47,3 +47,14 @@ next-env.d.ts
 
 # generated images
 generated-images/
+
+# JetBrains IDE settings
+.idea/*
+!.idea/codeStyles/
+!.idea/codeStyles/**
+!.idea/inspectionProfiles/
+!.idea/inspectionProfiles/**
+!.idea/misc.xml
+!.idea/modules.xml
+!.idea/prettier.xml
+!.idea/vcs.xml

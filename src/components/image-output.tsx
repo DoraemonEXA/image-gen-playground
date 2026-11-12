@@ -3,17 +3,24 @@
 import { Button } from '@/components/ui/button';
 import { EDIT_INPUT_FORMATS, type ImageMode, type ImageOutputFormat } from '@/lib/models';
 import { cn } from '@/lib/utils';
-import { Loader2, Send, Grid } from 'lucide-react';
+import { usePreferences } from '@/modules/preferences/client';
+import { Grid, Loader2, Send } from 'lucide-react';
 import Image from 'next/image';
 import * as React from 'react';
 
 function ElapsedTimer({ startTime, className }: { startTime: number; className?: string }) {
+    const { t } = usePreferences();
     const [now, setNow] = React.useState(() => Date.now());
     React.useEffect(() => {
         const id = setInterval(() => setNow(Date.now()), 100);
         return () => clearInterval(id);
     }, []);
-    return <span className={cn('tabular-nums', className)}>{Math.max(0, (now - startTime) / 1000).toFixed(1)}s</span>;
+    return (
+        <span className={cn('tabular-nums', className)}>
+            {Math.max(0, (now - startTime) / 1000).toFixed(1)}
+            {t('s')}
+        </span>
+    );
 }
 
 type ImageInfo = {
@@ -53,6 +60,7 @@ export function ImageOutput({
     baseImagePreviewUrl,
     streamingPreviewImages
 }: ImageOutputProps) {
+    const { t } = usePreferences();
     const handleSendClick = () => {
         // Send to edit only works when a single image is selected
         if (typeof viewMode === 'number' && imageBatch && imageBatch[viewMode]) {
@@ -70,7 +78,7 @@ export function ImageOutput({
         EDIT_INPUT_FORMATS.includes(selectedImage.filename.split('.').pop() as ImageOutputFormat);
 
     return (
-        <div className='flex h-full min-h-[300px] w-full flex-col items-center justify-between gap-4 overflow-hidden rounded-lg border border-white/20 bg-black p-4'>
+        <div className='border-foreground/20 bg-background flex h-full min-h-[300px] w-full flex-col items-center justify-between gap-4 overflow-hidden rounded-lg border p-4'>
             <div className='relative flex h-full w-full flex-grow items-center justify-center overflow-hidden'>
                 {isLoading ? (
                     streamingPreviewImages && streamingPreviewImages.size > 0 ? (
@@ -85,7 +93,7 @@ export function ImageOutput({
                                 return (
                                     <Image
                                         src={dataUrl}
-                                        alt='Streaming preview'
+                                        alt={t('Streaming preview')}
                                         width={512}
                                         height={512}
                                         className='max-h-full max-w-full object-contain'
@@ -96,9 +104,9 @@ export function ImageOutput({
                             {/* Overlay loader at bottom center */}
                             <div className='absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-white/80'>
                                 <Loader2 className='h-4 w-4 animate-spin' />
-                                <p className='text-sm'>Streaming...</p>
+                                <p className='text-sm'>{t('Streaming...')}</p>
                                 {loadingStartTime !== null && (
-                                    <ElapsedTimer startTime={loadingStartTime} className='text-sm text-white/50' />
+                                    <ElapsedTimer startTime={loadingStartTime} className='text-sm text-white/70' />
                                 )}
                             </div>
                         </div>
@@ -106,26 +114,32 @@ export function ImageOutput({
                         <div className='relative flex h-full w-full items-center justify-center'>
                             <Image
                                 src={baseImagePreviewUrl}
-                                alt='Base image for editing'
+                                alt={t('Base image for editing')}
                                 fill
                                 style={{ objectFit: 'contain' }}
                                 className='blur-md filter'
                                 unoptimized
                             />
-                            <div className='absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white/80'>
+                            <div className='bg-background/50 text-foreground/80 absolute inset-0 flex flex-col items-center justify-center'>
                                 <Loader2 className='mb-2 h-8 w-8 animate-spin' />
-                                <p>Editing image...</p>
+                                <p>{t('Editing image...')}</p>
                                 {loadingStartTime !== null && (
-                                    <ElapsedTimer startTime={loadingStartTime} className='mt-1 text-sm text-white/50' />
+                                    <ElapsedTimer
+                                        startTime={loadingStartTime}
+                                        className='text-foreground/50 mt-1 text-sm'
+                                    />
                                 )}
                             </div>
                         </div>
                     ) : (
-                        <div className='flex flex-col items-center justify-center text-white/60'>
+                        <div className='text-foreground/60 flex flex-col items-center justify-center'>
                             <Loader2 className='mb-2 h-8 w-8 animate-spin' />
-                            <p>Generating image...</p>
+                            <p>{t('Generating image...')}</p>
                             {loadingStartTime !== null && (
-                                <ElapsedTimer startTime={loadingStartTime} className='mt-1 text-sm text-white/40' />
+                                <ElapsedTimer
+                                    startTime={loadingStartTime}
+                                    className='text-foreground/40 mt-1 text-sm'
+                                />
                             )}
                         </div>
                     )
@@ -136,10 +150,10 @@ export function ImageOutput({
                             {imageBatch.map((img, index) => (
                                 <div
                                     key={img.filename}
-                                    className='relative aspect-square overflow-hidden rounded border border-white/10'>
+                                    className='border-foreground/10 relative aspect-square overflow-hidden rounded border'>
                                     <Image
                                         src={img.path}
-                                        alt={`Generated image ${index + 1}`}
+                                        alt={t('Generated image {v0}', { v0: index + 1 })}
                                         fill
                                         style={{ objectFit: 'contain' }}
                                         sizes='(max-width: 768px) 50vw, (max-width: 1024px) 33vw, 25vw'
@@ -151,38 +165,38 @@ export function ImageOutput({
                     ) : imageBatch[viewMode] ? (
                         <Image
                             src={imageBatch[viewMode].path}
-                            alt={altText}
+                            alt={t(altText)}
                             width={512}
                             height={512}
                             className='max-h-full max-w-full object-contain'
                             unoptimized
                         />
                     ) : (
-                        <div className='text-center text-white/40'>
-                            <p>Error displaying image.</p>
+                        <div className='text-foreground/40 text-center'>
+                            <p>{t('Error displaying image.')}</p>
                         </div>
                     )
                 ) : (
-                    <div className='text-center text-white/40'>
-                        <p>Your generated image will appear here.</p>
+                    <div className='text-foreground/40 text-center'>
+                        <p>{t('Your generated image will appear here.')}</p>
                     </div>
                 )}
             </div>
 
             <div className='flex h-10 w-full shrink-0 items-center justify-center gap-4'>
                 {showCarousel && (
-                    <div className='flex items-center gap-1.5 rounded-md border border-white/10 bg-neutral-800/50 p-1'>
+                    <div className='border-foreground/10 bg-muted/50 flex items-center gap-1.5 rounded-md border p-1'>
                         <Button
                             variant='ghost'
                             size='icon'
                             className={cn(
                                 'h-8 w-8 rounded p-1',
                                 viewMode === 'grid'
-                                    ? 'bg-white/20 text-white'
-                                    : 'text-white/50 hover:bg-white/10 hover:text-white/80'
+                                    ? 'bg-foreground/20 text-foreground'
+                                    : 'text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80'
                             )}
                             onClick={() => onViewChange('grid')}
-                            aria-label='Show grid view'>
+                            aria-label={t('Show grid view')}>
                             <Grid className='h-4 w-4' />
                         </Button>
                         {imageBatch.map((img, index) => (
@@ -193,14 +207,14 @@ export function ImageOutput({
                                 className={cn(
                                     'h-8 w-8 overflow-hidden rounded p-0.5',
                                     viewMode === index
-                                        ? 'ring-2 ring-white ring-offset-1 ring-offset-black'
+                                        ? 'ring-foreground ring-offset-background ring-2 ring-offset-1'
                                         : 'opacity-60 hover:opacity-100'
                                 )}
                                 onClick={() => onViewChange(index)}
-                                aria-label={`Select image ${index + 1}`}>
+                                aria-label={t('Select image {v0}', { v0: index + 1 })}>
                                 <Image
                                     src={img.path}
-                                    alt={`Thumbnail ${index + 1}`}
+                                    alt={t('Thumbnail {v0}', { v0: index + 1 })}
                                     width={28}
                                     height={28}
                                     className='h-full w-full object-cover'
@@ -217,12 +231,12 @@ export function ImageOutput({
                     onClick={handleSendClick}
                     disabled={!canSendToEdit}
                     className={cn(
-                        'shrink-0 border-white/20 text-white/80 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-50',
+                        'border-foreground/20 text-foreground/80 hover:bg-foreground/10 hover:text-foreground shrink-0 disabled:pointer-events-none disabled:opacity-50',
                         // Hide button completely if grid view is active and there are multiple images
                         showCarousel && viewMode === 'grid' ? 'invisible' : 'visible'
                     )}>
                     <Send className='mr-2 h-4 w-4' />
-                    Send to Edit
+                    {t('Send to Edit')}
                 </Button>
             </div>
         </div>

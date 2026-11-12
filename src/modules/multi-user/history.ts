@@ -86,19 +86,46 @@ export function readImage(userId: string, filename: string) {
     }
 }
 
-export function cleanGarbage() {
+export function cleanGarbage(batch?: { after: string; limit: number }) {
     const db = database();
-    for (const { filepath } of db.prepare('SELECT filepath FROM garbage').all() as Array<{ filepath: string }>) {
+    const root = path.resolve(config().dataDir, 'images');
+    let removed = 0;
+    let failed = 0;
+    const rows = (
+        batch
+            ? db
+                  .prepare('SELECT filepath FROM garbage WHERE filepath>? ORDER BY filepath LIMIT ?')
+                  .all(batch.after, batch.limit)
+            : db.prepare('SELECT filepath FROM garbage').all()
+    ) as Array<{ filepath: string }>;
+    for (const { filepath } of rows) {
         try {
+            if (fs.lstatSync(root).isSymbolicLink()) throw new Error('Unsafe image root');
+            const relative = path.relative(root, path.resolve(filepath));
+            if (!relative || relative.startsWith('..') || path.isAbsolute(relative))
+                throw new Error('Unsafe image path');
+            // Reject symlink/junction traversal, including a replaced parent directory.
+            let current = root;
+            for (const part of relative.split(path.sep)) {
+                current = path.join(current, part);
+                if (
+                    fs.existsSync(/* turbopackIgnore: true */ current) &&
+                    fs.lstatSync(/* turbopackIgnore: true */ current).isSymbolicLink()
+                )
+                    throw new Error('Unsafe image link');
+            }
             fs.rmSync(filepath, { force: true });
             db.prepare('DELETE FROM garbage WHERE filepath=?').run(filepath);
+            removed++;
         } catch {
             /* Tombstoned content stays inaccessible; retry next cleanup. */
+            failed++;
         }
     }
+    return { removed, failed, ...(batch ? { next: rows.length === batch.limit ? rows.at(-1)!.filepath : null } : {}) };
 }
 
-export function deleteHistory(userId: string, ids?: string[]) {
+export function deleteHistory(userId: string, ids?: string[], collectGarbage = true) {
     database()
         .transaction(() => {
             const db = database();
@@ -126,7 +153,7 @@ export function deleteHistory(userId: string, ids?: string[]) {
             }
         })
         .immediate();
-    cleanGarbage();
+    if (collectGarbage) cleanGarbage();
 }
 
 export function deleteImages(userId: string, filenames: string[]) {

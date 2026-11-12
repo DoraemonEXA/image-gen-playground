@@ -2,6 +2,7 @@
 
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ImageMode } from '@/lib/models';
+import { usePreferences } from '@/modules/preferences/client';
 
 type ModeToggleProps = {
     currentMode: ImageMode;
@@ -9,6 +10,9 @@ type ModeToggleProps = {
 };
 
 export function ModeToggle({ currentMode, onModeChange }: ModeToggleProps) {
+    const { t } = usePreferences();
+    const active =
+        'border-foreground bg-foreground text-background data-[state=active]:bg-foreground data-[state=active]:text-background dark:data-[state=active]:border-foreground dark:data-[state=active]:bg-foreground dark:data-[state=active]:text-background';
     return (
         <Tabs value={currentMode} onValueChange={(value) => onModeChange(value as ImageMode)} className='w-auto'>
             <TabsList className='grid h-auto grid-cols-2 gap-1 rounded-md border-none bg-transparent p-0'>
@@ -16,19 +20,19 @@ export function ModeToggle({ currentMode, onModeChange }: ModeToggleProps) {
                     value='generate'
                     className={`rounded-md border px-3 py-1 text-sm transition-colors ${
                         currentMode === 'generate'
-                            ? 'border-white bg-white text-black'
-                            : 'border-dashed border-white/30 bg-transparent text-white/60 hover:border-white/50 hover:text-white/80'
+                            ? active
+                            : 'border-foreground/30 text-foreground/60 hover:border-foreground/50 hover:text-foreground/80 border-dashed bg-transparent'
                     } `}>
-                    Generate
+                    {t('Generate')}
                 </TabsTrigger>
                 <TabsTrigger
                     value='edit'
                     className={`rounded-md border px-3 py-1 text-sm transition-colors ${
                         currentMode === 'edit'
-                            ? 'border-white bg-white text-black'
-                            : 'border-dashed border-white/30 bg-transparent text-white/60 hover:border-white/50 hover:text-white/80'
+                            ? active
+                            : 'border-foreground/30 text-foreground/60 hover:border-foreground/50 hover:text-foreground/80 border-dashed bg-transparent'
                     } `}>
-                    Edit
+                    {t('Edit')}
                 </TabsTrigger>
             </TabsList>
         </Tabs>

@@ -1,24 +1,22 @@
 'use client';
 
-import { EditingForm, type EditRegionMode, type EditingFormData } from '@/components/editing-form';
+import { EditingForm, type EditingFormData, type EditRegionMode } from '@/components/editing-form';
 import { GenerationForm, type GenerationFormData } from '@/components/generation-form';
 import { HistoryPanel } from '@/components/history-panel';
 import { ImageOutput } from '@/components/image-output';
 import { PasswordDialog } from '@/components/password-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { calculateApiCost, type ApiUsage, type CostDetails } from '@/lib/cost-utils';
+import { type ApiUsage, calculateApiCost, type CostDetails } from '@/lib/cost-utils';
 import { db, type ImageRecord } from '@/lib/db';
 import {
     DEFAULT_COMPLEXITY,
     DEFAULT_GPT_IMAGE_MODEL,
     DEFAULT_SVG_WRITER_MODEL,
     EDIT_INPUT_FORMATS,
-    GIF_FRAME_COUNT,
-    GIF_FRAME_DURATION_MS,
-    MAX_EDIT_IMAGES,
-    MODEL_CAPABILITIES,
     getMimeType,
     getStreamingBlockedReason,
+    GIF_FRAME_COUNT,
+    GIF_FRAME_DURATION_MS,
     type GptImageModel,
     type HistoryGptImageModel,
     type ImageBackground,
@@ -27,12 +25,15 @@ import {
     type ImageModeration,
     type ImageOutputFormat,
     type ImageQuality,
+    MAX_EDIT_IMAGES,
+    MODEL_CAPABILITIES,
     type SvgReasoningEffort,
     type SvgWriterModel
 } from '@/lib/models';
 import { getPresetDimensions } from '@/lib/size-utils';
-import { AccountRuntime, useAccountRuntime, loadPrivateHistory } from '@/modules/multi-user/client';
+import { AccountRuntime, loadPrivateHistory, useAccountRuntime } from '@/modules/multi-user/client';
 import type { ServerHistory } from '@/modules/multi-user/history';
+import { usePreferences } from '@/modules/preferences/client';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { ImagesResponse } from 'openai/resources/images';
 import * as React from 'react';
@@ -123,6 +124,7 @@ export default function HomePage() {
 }
 
 function Playground() {
+    const { t } = usePreferences();
     const account = useAccountRuntime();
     const { multi, fetch, refresh: refreshAccount } = account;
     const effectiveStorageModeClient = multi ? 'fs' : legacyStorageModeClient;
@@ -362,7 +364,7 @@ function Playground() {
             }
 
             if (editImageFiles.length >= MAX_EDIT_IMAGES) {
-                alert(`Cannot paste: Maximum of ${MAX_EDIT_IMAGES} images reached.`);
+                alert(t(`Cannot paste: Maximum of ${MAX_EDIT_IMAGES} images reached.`));
                 return;
             }
 
@@ -389,7 +391,7 @@ function Playground() {
         return () => {
             window.removeEventListener('paste', handlePaste);
         };
-    }, [mode, editImageFiles.length]);
+    }, [mode, editImageFiles.length, t]);
 
     async function sha256Client(text: string): Promise<string> {
         const encoder = new TextEncoder();
@@ -768,7 +770,7 @@ function Playground() {
 
     const handleClearHistory = React.useCallback(async () => {
         if (multi) {
-            if (!confirm('Permanently delete all your saved images and history? Spending will remain recorded.'))
+            if (!confirm(t('Permanently delete all your saved images and history? Spending will remain recorded.')))
                 return;
             try {
                 const response = await fetch('/api/multi-user/history/delete', {
@@ -789,7 +791,7 @@ function Playground() {
                 ? 'Are you sure you want to clear the entire image history? In IndexedDB mode, this will also permanently delete all stored images. This cannot be undone.'
                 : 'Are you sure you want to clear the entire image history? This cannot be undone.';
 
-        if (window.confirm(confirmationMessage)) {
+        if (window.confirm(t(confirmationMessage))) {
             setHistory([]);
             setLatestImageBatch(null);
             setImageOutputView('grid');
@@ -808,7 +810,7 @@ function Playground() {
                 setError(`Failed to clear history: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
-    }, [multi, fetch, refreshPrivateHistory, effectiveStorageModeClient]);
+    }, [multi, fetch, refreshPrivateHistory, effectiveStorageModeClient, t]);
 
     const handleSendToEdit = async (filename: string) => {
         if (isSendingToEdit) return;
@@ -956,16 +958,18 @@ function Playground() {
     }, []);
 
     return (
-        <main className='flex min-h-screen flex-col items-center bg-black p-4 text-white md:p-8 lg:p-12'>
+        <main className='bg-background text-foreground flex min-h-screen flex-col items-center p-4 md:p-8 lg:p-12'>
             <PasswordDialog
                 isOpen={isPasswordDialogOpen}
                 onOpenChange={setIsPasswordDialogOpen}
                 onSave={handleSavePassword}
-                title={passwordDialogContext === 'retry' ? 'Password Required' : 'Configure Password'}
+                title={passwordDialogContext === 'retry' ? t('Password Required') : t('Configure Password')}
                 description={
                     passwordDialogContext === 'retry'
-                        ? 'The server requires a password, or the previous one was incorrect. Please enter it to continue.'
-                        : 'Set a password to use for API requests.'
+                        ? t(
+                              'The server requires a password, or the previous one was incorrect. Please enter it to continue.'
+                          )
+                        : t('Set a password to use for API requests.')
                 }
             />
             <div className='w-full max-w-screen-2xl space-y-6'>
@@ -1087,9 +1091,11 @@ function Playground() {
                     </div>
                     <div className='flex h-[70vh] min-h-[600px] flex-col lg:col-span-1'>
                         {error && (
-                            <Alert variant='destructive' className='mb-4 border-red-500/50 bg-red-900/20 text-red-300'>
-                                <AlertTitle className='text-red-200'>Error</AlertTitle>
-                                <AlertDescription>{error}</AlertDescription>
+                            <Alert
+                                variant='destructive'
+                                className='bg-destructive/10 text-destructive mb-4 border-red-500/50'>
+                                <AlertTitle className='text-destructive'>{t('Error')}</AlertTitle>
+                                <AlertDescription>{t(error)}</AlertDescription>
                             </Alert>
                         )}
                         <ImageOutput
@@ -1127,7 +1133,7 @@ function Playground() {
                             onClick={() =>
                                 refreshPrivateHistory(historyCursor).catch((error) => setError(error.message))
                             }>
-                            Load more history
+                            {t('Load more history')}
                         </button>
                     )}
                 </div>

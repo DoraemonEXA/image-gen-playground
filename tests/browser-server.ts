@@ -20,7 +20,8 @@ async function main() {
             AUTH_ENCRYPTION_KEY: 'b'.repeat(64),
             OPENAI_API_KEY: 'mock-key',
             OPENAI_API_BASE_URL: mock.url,
-            TRUST_PROXY: 'false'
+            TRUST_PROXY: 'false',
+            IMAGE_RETENTION_DAYS: '0'
         }
     });
     fs.writeFileSync(path.join(directory, 'server.pid'), String(child.pid));

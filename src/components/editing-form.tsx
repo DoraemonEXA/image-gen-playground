@@ -14,9 +14,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
     EDIT_INPUT_FORMATS,
-    GPT_IMAGE_MODELS,
     getMimeType,
     getStreamingBlockedReason,
+    GPT_IMAGE_MODELS,
     type GptImageModel,
     type ImageBackground,
     type ImageComplexity,
@@ -25,8 +25,9 @@ import {
     type ImageOutputFormat,
     type ImageQuality
 } from '@/lib/models';
-import { validateSizeSelection, type SizePreset } from '@/lib/size-utils';
-import { Upload, Eraser, Save, Loader2, X, ScanEye, UploadCloud, Lock, LockOpen, HelpCircle } from 'lucide-react';
+import { type SizePreset, validateSizeSelection } from '@/lib/size-utils';
+import { usePreferences } from '@/modules/preferences/client';
+import { Eraser, HelpCircle, Loader2, Lock, LockOpen, Save, ScanEye, Upload, UploadCloud, X } from 'lucide-react';
 import Image from 'next/image';
 import * as React from 'react';
 
@@ -181,6 +182,7 @@ export function EditingForm({
     partialImages,
     setPartialImages
 }: EditingFormProps) {
+    const { t } = usePreferences();
     const [firstImagePreviewUrl, setFirstImagePreviewUrl] = React.useState<string | null>(null);
 
     const showCompression = editOutputFormat === 'jpeg' || editOutputFormat === 'webp';
@@ -195,7 +197,7 @@ export function EditingForm({
     const customSizeInvalid = !customSizeValidation.valid;
     const streamingBlockedReason = getStreamingBlockedReason(editN[0], editOutputFormat);
     const streaming = enableStreaming && !streamingBlockedReason;
-    const regionLabel = editRegionMode === 'markup' ? 'Markup' : 'Mask';
+    const regionLabel = t(editRegionMode === 'markup' ? 'Markup' : 'Mask');
     const isGif = editOutputFormat === 'gif';
 
     // A saved file only fits the mode it was made for; the drawn strokes carry over.
@@ -421,7 +423,7 @@ export function EditingForm({
             const totalFiles = imageFiles.length + newFiles.length;
 
             if (totalFiles > maxImages) {
-                alert(`You can only select up to ${maxImages} images.`);
+                alert(t(`You can only select up to ${maxImages} images.`));
                 const allowedNewFiles = newFiles.slice(0, maxImages - imageFiles.length);
                 if (allowedNewFiles.length === 0) {
                     event.target.value = '';
@@ -466,7 +468,7 @@ export function EditingForm({
         }
 
         if (file.type !== 'image/png') {
-            alert(`Invalid file type. Please upload a PNG file for the ${regionLabel.toLowerCase()}.`);
+            alert(t(`Invalid file type. Please upload a PNG file for the ${regionLabel.toLowerCase()}.`));
             event.target.value = '';
             return;
         }
@@ -478,7 +480,9 @@ export function EditingForm({
         img.onload = () => {
             if (img.width !== editOriginalImageSize.width || img.height !== editOriginalImageSize.height) {
                 alert(
-                    `${regionLabel} dimensions (${img.width}x${img.height}) must match the source image dimensions (${editOriginalImageSize.width}x${editOriginalImageSize.height}).`
+                    t(
+                        `${regionLabel} dimensions (${img.width}x${img.height}) must match the source image dimensions (${editOriginalImageSize.width}x${editOriginalImageSize.height}).`
+                    )
                 );
                 URL.revokeObjectURL(objectUrl);
                 event.target.value = '';
@@ -504,7 +508,7 @@ export function EditingForm({
         };
 
         img.onerror = () => {
-            alert(`Failed to load the uploaded ${regionLabel.toLowerCase()} image to check dimensions.`);
+            alert(t(`Failed to load the uploaded ${regionLabel.toLowerCase()} image to check dimensions.`));
             URL.revokeObjectURL(objectUrl);
             event.target.value = '';
         };
@@ -515,11 +519,11 @@ export function EditingForm({
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (imageFiles.length === 0) {
-            alert('Please select at least one image to edit.');
+            alert(t('Please select at least one image to edit.'));
             return;
         }
         if (editDrawnPoints.length > 0 && !editRegionFile && !editIsRegionSaved) {
-            alert(`Please save the ${regionLabel.toLowerCase()} you have drawn before submitting.`);
+            alert(t(`Please save the ${regionLabel.toLowerCase()} you have drawn before submitting.`));
             return;
         }
         if (customSizeInvalid) {
@@ -546,30 +550,30 @@ export function EditingForm({
     };
 
     const displayFileNames = (files: File[]) => {
-        if (files.length === 0) return 'No file selected.';
+        if (files.length === 0) return t('No file selected.');
         if (files.length === 1) return files[0].name;
-        return `${files.length} files selected`;
+        return t('{v0} files selected', { v0: files.length });
     };
 
     return (
-        <Card className='flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-black'>
-            <CardHeader className='flex items-start justify-between border-b border-white/10 pb-4'>
+        <Card className='border-foreground/10 bg-background flex h-full w-full flex-col overflow-hidden rounded-lg border'>
+            <CardHeader className='border-foreground/10 flex items-start justify-between border-b pb-4'>
                 <div>
                     <div className='flex items-center'>
-                        <CardTitle className='py-1 text-lg font-medium text-white'>Edit Image</CardTitle>
+                        <CardTitle className='text-foreground py-1 text-lg font-medium'>{t('Edit Image')}</CardTitle>
                         {isPasswordRequiredByBackend && (
                             <Button
                                 variant='ghost'
                                 size='icon'
                                 onClick={onOpenPasswordDialog}
-                                className='ml-2 text-white/60 hover:text-white'
-                                aria-label='Configure Password'>
+                                className='text-foreground/60 hover:text-foreground ml-2'
+                                aria-label={t('Configure Password')}>
                                 {clientPasswordHash ? <Lock className='h-4 w-4' /> : <LockOpen className='h-4 w-4' />}
                             </Button>
                         )}
                     </div>
-                    <CardDescription className='mt-1 text-white/60'>
-                        Modify an existing image with a text prompt.
+                    <CardDescription className='text-foreground/60 mt-1'>
+                        {t('Modify an existing image with a text prompt.')}
                     </CardDescription>
                 </div>
                 <ModeToggle currentMode={currentMode} onModeChange={onModeChange} />
@@ -577,8 +581,8 @@ export function EditingForm({
             <form onSubmit={handleSubmit} className='flex h-full flex-1 flex-col overflow-hidden'>
                 <CardContent className='flex-1 space-y-5 overflow-y-auto p-4'>
                     <div className='space-y-1.5'>
-                        <Label htmlFor='edit-model-select' className='text-white'>
-                            Model
+                        <Label htmlFor='edit-model-select' className='text-foreground'>
+                            {t('Model')}
                         </Label>
                         <div className='flex items-center gap-4'>
                             <Select
@@ -587,12 +591,12 @@ export function EditingForm({
                                 disabled={isLoading}>
                                 <SelectTrigger
                                     id='edit-model-select'
-                                    className='w-[220px] rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'>
-                                    <SelectValue placeholder='Select model' />
+                                    className='border-foreground/20 bg-background text-foreground focus:border-foreground/50 focus:ring-foreground/50 w-[220px] rounded-md border'>
+                                    <SelectValue placeholder={t('Select model')} />
                                 </SelectTrigger>
-                                <SelectContent className='border-white/20 bg-black text-white'>
+                                <SelectContent className='border-foreground/20 bg-background text-foreground'>
                                     {GPT_IMAGE_MODELS.map((id) => (
-                                        <SelectItem key={id} value={id} className='focus:bg-white/10'>
+                                        <SelectItem key={id} value={id} className='focus:bg-foreground/10'>
                                             {id}
                                         </SelectItem>
                                     ))}
@@ -606,18 +610,21 @@ export function EditingForm({
                                             checked={streaming}
                                             onCheckedChange={(checked) => setEnableStreaming(!!checked)}
                                             disabled={isLoading || !!streamingBlockedReason}
-                                            className='border-white/40 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-white data-[state=checked]:bg-white data-[state=checked]:text-black'
+                                            className='border-foreground/40 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background disabled:cursor-not-allowed disabled:opacity-50'
                                         />
                                         <Label
                                             htmlFor='edit-enable-streaming'
-                                            className={`text-sm ${streamingBlockedReason ? 'cursor-not-allowed text-white/40' : 'cursor-pointer text-white/80'}`}>
-                                            Enable Streaming
+                                            className={`text-sm ${streamingBlockedReason ? 'text-foreground/40 cursor-not-allowed' : 'text-foreground/80 cursor-pointer'}`}>
+                                            {t('Enable Streaming')}
                                         </Label>
                                     </div>
                                 </TooltipTrigger>
                                 <TooltipContent className='max-w-[250px]'>
-                                    {streamingBlockedReason ??
-                                        'Shows partial preview images as they are generated, providing a more interactive experience.'}
+                                    {streamingBlockedReason
+                                        ? t(streamingBlockedReason)
+                                        : t(
+                                              'Shows partial preview images as they are generated, providing a more interactive experience.'
+                                          )}
                                 </TooltipContent>
                             </Tooltip>
                         </div>
@@ -626,13 +633,15 @@ export function EditingForm({
                     {streaming && (
                         <div className='space-y-3'>
                             <div className='flex items-center gap-2'>
-                                <Label className='text-white'>Preview Images</Label>
+                                <Label className='text-foreground'>{t('Preview Images')}</Label>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
-                                        <HelpCircle className='h-4 w-4 cursor-help text-white/40 hover:text-white/60' />
+                                        <HelpCircle className='text-foreground/40 hover:text-foreground/60 h-4 w-4 cursor-help' />
                                     </TooltipTrigger>
                                     <TooltipContent className='max-w-[250px]'>
-                                        Each preview image adds ~$0.003 to the cost (100 additional output tokens).
+                                        {t(
+                                            'Each preview image adds ~$0.003 to the cost (100 additional output tokens).'
+                                        )}
                                     </TooltipContent>
                                 </Tooltip>
                             </div>
@@ -645,9 +654,9 @@ export function EditingForm({
                                     <RadioGroupItem
                                         value='1'
                                         id='edit-partial-1'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='edit-partial-1' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='edit-partial-1' className='text-foreground/80 cursor-pointer'>
                                         1
                                     </Label>
                                 </div>
@@ -655,9 +664,9 @@ export function EditingForm({
                                     <RadioGroupItem
                                         value='2'
                                         id='edit-partial-2'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='edit-partial-2' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='edit-partial-2' className='text-foreground/80 cursor-pointer'>
                                         2
                                     </Label>
                                 </div>
@@ -665,9 +674,9 @@ export function EditingForm({
                                     <RadioGroupItem
                                         value='3'
                                         id='edit-partial-3'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='edit-partial-3' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='edit-partial-3' className='text-foreground/80 cursor-pointer'>
                                         3
                                     </Label>
                                 </div>
@@ -676,28 +685,30 @@ export function EditingForm({
                     )}
 
                     <div className='space-y-1.5'>
-                        <Label htmlFor='edit-prompt' className='text-white'>
-                            Prompt
+                        <Label htmlFor='edit-prompt' className='text-foreground'>
+                            {t('Prompt')}
                         </Label>
                         <Textarea
                             id='edit-prompt'
-                            placeholder='e.g., Add a party hat to the main subject'
+                            placeholder={t('e.g., Add a party hat to the main subject')}
                             value={editPrompt}
                             onChange={(e) => setEditPrompt(e.target.value)}
                             required
                             disabled={isLoading}
-                            className='min-h-[80px] rounded-md border border-white/20 bg-black text-white placeholder:text-white/40 focus:border-white/50 focus:ring-white/50'
+                            className='border-foreground/20 bg-background text-foreground placeholder:text-foreground/40 focus:border-foreground/50 focus:ring-foreground/50 min-h-[80px] rounded-md border'
                         />
                     </div>
 
                     <div className='space-y-2'>
-                        <Label className='text-white'>Source Image(s) [Max: {maxImages}]</Label>
+                        <Label className='text-foreground'>
+                            {t('Source Image(s) [Max:')} {maxImages}]
+                        </Label>
                         <Label
                             htmlFor='image-files-input'
-                            className='flex h-10 w-full cursor-pointer items-center justify-between rounded-md border border-white/20 bg-black px-3 py-2 text-sm transition-colors hover:bg-white/5'>
-                            <span className='truncate pr-2 text-white/60'>{displayFileNames(imageFiles)}</span>
-                            <span className='flex shrink-0 items-center gap-1.5 rounded-md bg-white/10 px-3 py-1 text-xs font-medium text-white/80 hover:bg-white/20'>
-                                <Upload className='h-3 w-3' /> Browse...
+                            className='border-foreground/20 bg-background hover:bg-foreground/5 flex h-10 w-full cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors'>
+                            <span className='text-foreground/60 truncate pr-2'>{displayFileNames(imageFiles)}</span>
+                            <span className='bg-foreground/10 text-foreground/80 hover:bg-foreground/20 flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium'>
+                                <Upload className='h-3 w-3' /> {t('Browse...')}
                             </span>
                         </Label>
                         <Input
@@ -715,10 +726,10 @@ export function EditingForm({
                                     <div key={url} className='relative shrink-0'>
                                         <Image
                                             src={url}
-                                            alt={`Source preview ${index + 1}`}
+                                            alt={t('Source preview {v0}', { v0: index + 1 })}
                                             width={80}
                                             height={80}
-                                            className='rounded border border-white/10 object-cover'
+                                            className='border-foreground/10 rounded border object-cover'
                                             unoptimized
                                         />
                                         <Button
@@ -727,7 +738,7 @@ export function EditingForm({
                                             size='icon'
                                             className='absolute top-0 right-0 h-5 w-5 translate-x-1/3 -translate-y-1/3 transform rounded-full bg-red-600 p-0.5 text-white hover:bg-red-700'
                                             onClick={() => handleRemoveImage(index)}
-                                            aria-label={`Remove image ${index + 1}`}>
+                                            aria-label={t('Remove image {v0}', { v0: index + 1 })}>
                                             <X className='h-3 w-3' />
                                         </Button>
                                     </div>
@@ -737,27 +748,27 @@ export function EditingForm({
                     </div>
 
                     <div className='space-y-3'>
-                        <Label className='block text-white'>Mask or Markup</Label>
+                        <Label className='text-foreground block'>{t('Mask or Markup')}</Label>
                         <Button
                             type='button'
                             variant='outline'
                             size='sm'
                             onClick={() => setEditShowRegionEditor(!editShowRegionEditor)}
                             disabled={isLoading || !editOriginalImageSize}
-                            className='w-full justify-start border-white/20 px-3 text-white/80 hover:bg-white/10 hover:text-white'>
+                            className='border-foreground/20 text-foreground/80 hover:bg-foreground/10 hover:text-foreground w-full justify-start px-3'>
                             {editShowRegionEditor
-                                ? `Close ${regionLabel} Editor`
+                                ? t('Close {v0} Editor', { v0: regionLabel })
                                 : editRegionFile
-                                  ? `Edit Saved ${regionLabel}`
-                                  : 'Create Mask or Markup'}
+                                  ? t('Edit Saved {v0}', { v0: regionLabel })
+                                  : t('Create Mask or Markup')}
                             {editIsRegionSaved && !editShowRegionEditor && (
-                                <span className='ml-auto text-xs text-green-400'>(Saved)</span>
+                                <span className='text-success ml-auto text-xs'>{t('(Saved)')}</span>
                             )}
                             <ScanEye className='mt-0.5' />
                         </Button>
 
                         {editShowRegionEditor && firstImagePreviewUrl && editOriginalImageSize && (
-                            <div className='space-y-3 rounded-md border border-white/20 bg-black p-3'>
+                            <div className='border-foreground/20 bg-background space-y-3 rounded-md border p-3'>
                                 <RadioGroup
                                     value={editRegionMode}
                                     onValueChange={handleRegionModeChange}
@@ -768,43 +779,49 @@ export function EditingForm({
                                             value='mask'
                                             id='edit-region-mask'
                                             disabled={isGif}
-                                            className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                            className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                         />
                                         <Label
                                             htmlFor='edit-region-mask'
                                             className={
                                                 isGif
-                                                    ? 'cursor-not-allowed text-white/40'
-                                                    : 'cursor-pointer text-white/80'
+                                                    ? 'text-foreground/40 cursor-not-allowed'
+                                                    : 'text-foreground/80 cursor-pointer'
                                             }>
-                                            Mask
+                                            {t('Mask')}
                                         </Label>
                                     </div>
                                     <div className='flex items-center space-x-2'>
                                         <RadioGroupItem
                                             value='markup'
                                             id='edit-region-markup'
-                                            className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                            className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                         />
-                                        <Label htmlFor='edit-region-markup' className='cursor-pointer text-white/80'>
-                                            Markup
+                                        <Label
+                                            htmlFor='edit-region-markup'
+                                            className='text-foreground/80 cursor-pointer'>
+                                            {t('Markup')}
                                         </Label>
                                     </div>
                                 </RadioGroup>
-                                <p className='text-xs text-white/60'>
+                                <p className='text-foreground/60 text-xs'>
                                     {editRegionMode === 'markup'
-                                        ? 'Circle or sketch on the image to show where the change goes, and describe the change in the prompt. Applies to the first image.'
-                                        : 'Draw on the image below to mark areas for editing (drawn areas become transparent in the mask).'}
+                                        ? t(
+                                              'Circle or sketch on the image to show where the change goes, and describe the change in the prompt. Applies to the first image.'
+                                          )
+                                        : t(
+                                              'Draw on the image below to mark areas for editing (drawn areas become transparent in the mask).'
+                                          )}
                                 </p>
                                 <div
-                                    className='relative mx-auto w-full overflow-hidden rounded border border-white/10'
+                                    className='border-foreground/10 relative mx-auto w-full overflow-hidden rounded border'
                                     style={{
                                         maxWidth: `min(100%, ${editOriginalImageSize.width}px)`,
                                         aspectRatio: `${editOriginalImageSize.width} / ${editOriginalImageSize.height}`
                                     }}>
                                     <Image
                                         src={firstImagePreviewUrl}
-                                        alt='Image preview for drawing'
+                                        alt={t('Image preview for drawing')}
                                         width={editOriginalImageSize.width}
                                         height={editOriginalImageSize.height}
                                         className='block h-auto w-full'
@@ -826,8 +843,9 @@ export function EditingForm({
                                 </div>
                                 <div className='grid grid-cols-1 gap-4 pt-2'>
                                     <div className='space-y-2'>
-                                        <Label htmlFor='brush-size-slider' className='text-sm text-white'>
-                                            Brush Size: {editBrushSize[0]}px
+                                        <Label htmlFor='brush-size-slider' className='text-foreground text-sm'>
+                                            {t('Brush Size:')} {editBrushSize[0]}
+                                            {t('px')}
                                         </Label>
                                         <Slider
                                             id='brush-size-slider'
@@ -837,7 +855,7 @@ export function EditingForm({
                                             value={editBrushSize}
                                             onValueChange={setEditBrushSize}
                                             disabled={isLoading}
-                                            className='mt-1 [&>button]:border-black [&>button]:bg-white [&>button]:ring-offset-black [&>span:first-child]:h-1 [&>span:first-child>span]:bg-white'
+                                            className='[&>button]:border-background [&>button]:bg-foreground [&>button]:ring-offset-background [&>span:first-child>span]:bg-foreground mt-1 [&>span:first-child]:h-1'
                                         />
                                     </div>
                                 </div>
@@ -848,8 +866,8 @@ export function EditingForm({
                                         size='sm'
                                         onClick={() => regionInputRef.current?.click()}
                                         disabled={isLoading || !editOriginalImageSize}
-                                        className='mr-auto border-white/20 text-white/80 hover:bg-white/10 hover:text-white'>
-                                        <UploadCloud className='mr-1.5 h-4 w-4' /> Upload {regionLabel}
+                                        className='border-foreground/20 text-foreground/80 hover:bg-foreground/10 hover:text-foreground mr-auto'>
+                                        <UploadCloud className='mr-1.5 h-4 w-4' /> {t('Upload')} {regionLabel}
                                     </Button>
                                     <Input
                                         ref={regionInputRef}
@@ -866,8 +884,8 @@ export function EditingForm({
                                             size='sm'
                                             onClick={handleClearRegion}
                                             disabled={isLoading}
-                                            className='border-white/20 text-white/80 hover:bg-white/10 hover:text-white'>
-                                            <Eraser className='mr-1.5 h-4 w-4' /> Clear
+                                            className='border-foreground/20 text-foreground/80 hover:bg-foreground/10 hover:text-foreground'>
+                                            <Eraser className='mr-1.5 h-4 w-4' /> {t('Clear')}
                                         </Button>
                                         <Button
                                             type='button'
@@ -875,20 +893,20 @@ export function EditingForm({
                                             size='sm'
                                             onClick={generateAndSaveRegion}
                                             disabled={isLoading || editDrawnPoints.length === 0}
-                                            className='bg-white text-black hover:bg-white/90 disabled:opacity-50'>
-                                            <Save className='mr-1.5 h-4 w-4' /> Save {regionLabel}
+                                            className='bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50'>
+                                            <Save className='mr-1.5 h-4 w-4' /> {t('Save')} {regionLabel}
                                         </Button>
                                     </div>
                                 </div>
                                 {editRegionPreviewUrl && (
-                                    <div className='mt-3 border-t border-white/10 pt-3 text-center'>
-                                        <Label className='mb-1.5 block text-sm text-white'>
-                                            Generated {regionLabel} Preview:
+                                    <div className='border-foreground/10 mt-3 border-t pt-3 text-center'>
+                                        <Label className='text-foreground mb-1.5 block text-sm'>
+                                            {t('Generated')} {regionLabel} {t('Preview:')}
                                         </Label>
                                         <div className='inline-block rounded border border-gray-300 bg-white p-1'>
                                             <Image
                                                 src={editRegionPreviewUrl}
-                                                alt={`Generated ${regionLabel.toLowerCase()} preview`}
+                                                alt={t('Generated {v0} preview', { v0: regionLabel.toLowerCase() })}
                                                 width={0}
                                                 height={134}
                                                 className='block max-w-full'
@@ -899,27 +917,27 @@ export function EditingForm({
                                     </div>
                                 )}
                                 {editIsRegionSaved && !editRegionPreviewUrl && (
-                                    <p className='pt-1 text-center text-xs text-yellow-400'>
-                                        Generating {regionLabel.toLowerCase()} preview...
+                                    <p className='text-warning pt-1 text-center text-xs'>
+                                        {t('Generating')} {regionLabel.toLowerCase()} {t('preview...')}
                                     </p>
                                 )}
                                 {editIsRegionSaved && editRegionPreviewUrl && (
-                                    <p className='pt-1 text-center text-xs text-green-400'>
-                                        {regionLabel} saved successfully!
+                                    <p className='text-success pt-1 text-center text-xs'>
+                                        {regionLabel} {t('saved successfully!')}
                                     </p>
                                 )}
                             </div>
                         )}
                         {!editShowRegionEditor && editRegionFile && (
-                            <p className='pt-1 text-xs text-green-400'>
-                                {regionLabel} applied: {editRegionFile.name}
+                            <p className='text-success pt-1 text-xs'>
+                                {regionLabel} {t('applied:')} {editRegionFile.name}
                             </p>
                         )}
                     </div>
 
                     <div className='space-y-2'>
-                        <Label htmlFor='edit-n-slider' className='text-white'>
-                            Number of Images: {editN[0]}
+                        <Label htmlFor='edit-n-slider' className='text-foreground'>
+                            {t('Number of Images:')} {editN[0]}
                         </Label>
                         <Slider
                             id='edit-n-slider'
@@ -962,13 +980,13 @@ export function EditingForm({
                         setModeration={setEditModeration}
                     />
                 </CardContent>
-                <CardFooter className='border-t border-white/10 p-4'>
+                <CardFooter className='border-foreground/10 border-t p-4'>
                     <Button
                         type='submit'
                         disabled={isLoading || !editPrompt || imageFiles.length === 0 || customSizeInvalid}
-                        className='flex w-full items-center justify-center gap-2 rounded-md bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/40'>
+                        className='bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/10 disabled:text-foreground/40 flex w-full items-center justify-center gap-2 rounded-md'>
                         {isLoading && <Loader2 className='h-4 w-4 animate-spin' />}
-                        {isLoading ? 'Editing...' : 'Edit Image'}
+                        {isLoading ? t('Editing...') : t('Edit Image')}
                     </Button>
                 </CardFooter>
             </form>

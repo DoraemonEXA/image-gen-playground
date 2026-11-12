@@ -9,14 +9,27 @@ import {
     prepareSetup,
     resetAuthenticator,
     session,
-    setEnabled,
-    sessionDuration
+    sessionDuration,
+    setEnabled
 } from '../src/modules/multi-user/accounts';
 import { handleAccountRequest } from '../src/modules/multi-user/api';
 import { adjustBalance, adminOverview, balance, money, reconcile, settle } from '../src/modules/multi-user/billing';
 import { closeDatabases, database, recoverInterruptedRequests } from '../src/modules/multi-user/database';
 import { generationAccess } from '../src/modules/multi-user/generation';
-import { deleteHistory, deleteImages, history, readImage } from '../src/modules/multi-user/history';
+import {
+    cleanGarbage,
+    deleteHistory,
+    deleteImages,
+    history,
+    imagePath,
+    readImage
+} from '../src/modules/multi-user/history';
+import {
+    expireHistoryBatch,
+    RETENTION_BATCH_SIZE,
+    retentionDays,
+    runRetention
+} from '../src/modules/multi-user/retention';
 import { hash } from '../src/modules/multi-user/secrets';
 import { mockProvider, usage } from './mock-provider';
 import { NextRequest } from 'next/server';
@@ -91,6 +104,7 @@ beforeEach(async () => {
         MAX_ACTIVE_PER_USER: '1',
         MAX_ACTIVE_GLOBAL: '4'
     });
+    delete process.env.IMAGE_RETENTION_DAYS;
     const token = tokenFrom(issueSetupToken());
     const provision = await prepareSetup(token, 'admin');
     const sessionToken = confirmSetup(token, code(provision.secret), 'setup');
@@ -445,7 +459,11 @@ test('a disconnected request releases capacity and records unknown provider usag
 test('streaming admission follows upstream single-image and output-format constraints', async () => {
     funds();
     const before = provider.calls();
-    const cases: Array<Record<string, string>> = [{ n: '2' }, { output_format: 'gif' }, { output_format: 'svg', svg_model: 'gpt-6.1-sol' }];
+    const cases: Array<Record<string, string>> = [
+        { n: '2' },
+        { output_format: 'gif' },
+        { output_format: 'svg', svg_model: 'gpt-6.1-sol' }
+    ];
     for (const extra of cases) {
         const response = await generate(
             request('/api/images', admin.token, form('invalid stream', { ...extra, stream: 'true' }))
@@ -454,4 +472,101 @@ test('streaming admission follows upstream single-image and output-format constr
     }
     assert.equal(provider.calls(), before);
     assert.equal(balance().balance, 100_000);
+});
+
+test('retention validates configuration and is disabled by default, including legacy mode', async () => {
+    assert.equal(retentionDays(), 0);
+    assert.equal(retentionDays('0'), 0);
+    assert.equal(retentionDays('30'), 30);
+    for (const invalid of ['', '-1', '1.5', 'NaN', 'Infinity', '1e2', '999999999999999999'])
+        assert.throws(() => retentionDays(invalid), /IMAGE_RETENTION_DAYS/);
+    assert.equal(await runRetention(), 0);
+    process.env.IMAGE_RETENTION_DAYS = '1';
+    process.env.APP_MODE = 'single-user';
+    assert.equal(await runRetention(), 0);
+    assert.equal(expireHistoryBatch(Date.now()), 0);
+});
+
+test('retention expires old inactive generations across owners and preserves accounting', async () => {
+    funds();
+    const alice = await user('retention-alice');
+    const entries = [];
+    for (const owner of [admin, alice, admin, alice]) {
+        const response = await generate(request('/api/images', owner.token, form('private retention prompt')));
+        entries.push({ owner, ...(await response.json()) });
+    }
+    const now = Date.now();
+    const cutoff = now - 24 * 60 * 60 * 1000;
+    entries.forEach((entry, i) =>
+        database()
+            .prepare('UPDATE generations SET created=?,active=? WHERE id=?')
+            .run(i === 2 ? cutoff : cutoff - 1, i === 3 ? 1 : 0, entry.generationId)
+    );
+    database()
+        .prepare("UPDATE generations SET accounting='needs_reconciliation' WHERE id=?")
+        .run(entries[1].generationId);
+    const before = {
+        balance: balance(),
+        ledger: database().prepare('SELECT * FROM ledger').all(),
+        spending: adminOverview().users
+    };
+    process.env.IMAGE_RETENTION_DAYS = '1';
+    assert.equal(await runRetention(now), 2);
+    assert.equal(await runRetention(now), 0);
+    for (const entry of entries.slice(0, 2)) {
+        assert.throws(() => readImage(entry.owner.id, entry.images[0].filename), /not found/);
+        assert.equal(fs.existsSync(imagePath(entry.owner.id, entry.generationId, entry.images[0].filename)), false);
+        assert.deepEqual(
+            database().prepare('SELECT deleted,metadata FROM generations WHERE id=?').get(entry.generationId),
+            { deleted: 1, metadata: '{}' }
+        );
+    }
+    for (const entry of entries.slice(2)) assert.ok(readImage(entry.owner.id, entry.images[0].filename).buffer.length);
+    assert.deepEqual(balance(), before.balance);
+    assert.deepEqual(database().prepare('SELECT * FROM ledger').all(), before.ledger);
+    assert.deepEqual(adminOverview().users, before.spending);
+    assert.equal((adminOverview().unresolved[0] as { id: string }).id, entries[1].generationId);
+    assert.equal(history(admin.id).items.length, 1);
+    assert.equal(history(alice.id).items.length, 1);
+});
+
+test('retention batches work and retries failed file removal without exposing tombstoned images', async () => {
+    const now = Date.now();
+    for (let i = 0; i < RETENTION_BATCH_SIZE + 1; i++) {
+        database()
+            .prepare('INSERT INTO generations(id,user_id,created,model,metadata,active) VALUES(?,?,?,?,?,0)')
+            .run(`old-${i}`, admin.id, 1, 'gpt-image-2', '{}');
+    }
+    assert.equal(expireHistoryBatch(now), RETENTION_BATCH_SIZE);
+    assert.equal(expireHistoryBatch(now), 1);
+    funds();
+    const response = await generate(request('/api/images', admin.token, form()));
+    const result = await response.json();
+    const target = imagePath(admin.id, result.generationId, result.images[0].filename);
+    fs.unlinkSync(target);
+    fs.mkdirSync(target); // A directory cannot be removed by the non-recursive image-file deletion.
+    database().prepare('UPDATE generations SET created=1 WHERE id=?').run(result.generationId);
+    process.env.IMAGE_RETENTION_DAYS = '1';
+    assert.equal(await runRetention(now), 1);
+    assert.throws(() => readImage(admin.id, result.images[0].filename), /not found/);
+    assert.equal((database().prepare('SELECT COUNT(*) AS n FROM garbage').get() as { n: number }).n, 1);
+    fs.rmdirSync(target);
+    fs.writeFileSync(target, 'retry');
+    assert.equal(await runRetention(now), 0);
+    assert.equal(fs.existsSync(target), false);
+    assert.equal((database().prepare('SELECT COUNT(*) AS n FROM garbage').get() as { n: number }).n, 0);
+});
+
+test('garbage collector refuses paths and directory links outside private image storage', () => {
+    const outside = path.join(directory, 'outside');
+    fs.mkdirSync(outside);
+    const victim = path.join(outside, 'keep.png');
+    fs.writeFileSync(victim, 'keep');
+    const linked = path.join(directory, 'images', 'linked');
+    fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    for (const filepath of [victim, path.join(linked, 'keep.png')])
+        database().prepare('INSERT INTO garbage VALUES(?)').run(filepath);
+    assert.deepEqual(cleanGarbage(), { removed: 0, failed: 2 });
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'keep');
+    fs.unlinkSync(linked);
 });

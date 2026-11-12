@@ -1,6 +1,7 @@
 'use client';
 
 import type { ServerHistory } from './history';
+import { usePreferences } from '@/modules/preferences/client';
 import Link from 'next/link';
 import * as React from 'react';
 
@@ -61,6 +62,7 @@ export function useAccountRuntime() {
 }
 
 export function AccountRuntime({ children, admin = false }: { children: React.ReactNode; admin?: boolean }) {
+    const { t } = usePreferences();
     const [mode, setMode] = React.useState<'multi-user' | 'single-user' | null>(null);
     const [account, setAccount] = React.useState<AccountState | null>(null);
     const [error, setError] = React.useState('');
@@ -202,13 +204,14 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
 
     if (error)
         return (
-            <div className='p-8 text-red-300' role='alert'>
-                {error} <button onClick={() => window.location.reload()}>Reload</button>
+            <div className='text-destructive p-8' role='alert'>
+                {t(error)} <button onClick={() => window.location.reload()}>{t('Reload')}</button>
             </div>
         );
-    if (blocked || !mode || (mode === 'multi-user' && !account?.user)) return <p className='p-8'>Loading account…</p>;
+    if (blocked || !mode || (mode === 'multi-user' && !account?.user))
+        return <p className='p-8'>{t('Loading account…')}</p>;
     if (admin && (mode !== 'multi-user' || account?.user?.role !== 'admin'))
-        return <p className='p-8'>Administrator access required.</p>;
+        return <p className='p-8'>{t('Administrator access required.')}</p>;
     const logout = async () => {
         try {
             await api('auth/logout', {}, sessionId);
@@ -223,26 +226,30 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
         <Context.Provider value={runtime}>
             {checking && (
                 <p className='p-4' role='status'>
-                    Verifying session…
+                    {t('Verifying session…')}
                 </p>
             )}
             <div hidden={checking}>
                 {mode === 'multi-user' && (
-                    <header className='flex flex-wrap items-center gap-5 border-b border-neutral-800 bg-neutral-950 px-6 py-3 text-sm text-white'>
-                        <Link href='/'>Playground</Link>
+                    <header className='border-border bg-background text-foreground flex flex-wrap items-center gap-5 border-b px-6 py-3 text-sm'>
+                        <Link href='/'>{t('Playground')}</Link>
                         <span>{account?.user?.username}</span>
                         <span>
-                            Shared balance: <strong>{usd(account?.balance)}</strong>
+                            {t('Shared balance:')} <strong>{usd(account?.balance)}</strong>
                         </span>
-                        <span>My estimated spending: {usd(account?.spending)}</span>
-                        {!!account?.unresolved && <span className='text-amber-300'>Usage awaiting reconciliation</span>}
+                        <span>
+                            {t('My estimated spending:')} {usd(account?.spending)}
+                        </span>
+                        {!!account?.unresolved && (
+                            <span className='text-warning'>{t('Usage awaiting reconciliation')}</span>
+                        )}
                         {account?.user?.role === 'admin' && (
                             <a className='underline' href='/admin'>
-                                Administration
+                                {t('Administration')}
                             </a>
                         )}
                         <button className='ml-auto underline' onClick={logout}>
-                            Sign out
+                            {t('Sign out')}
                         </button>
                     </header>
                 )}

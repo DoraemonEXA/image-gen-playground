@@ -45,6 +45,16 @@ All accounts, including the administrator, use the same API key and balance. The
 
 Concurrency defaults to one generation per user and four across the server. Change `MAX_ACTIVE_PER_USER` and `MAX_ACTIVE_GLOBAL` to adjust those limits. Excess requests receive HTTP 429 and are not queued. Multi-user API calls disable automatic SDK retries to avoid silently repeating a paid request.
 
+## Language, theme, and automatic retention
+
+The display controls on every screen offer English / 简体中文 and System / Light / Dark themes. New browsers use English and follow the operating system theme. Choices are stored in that browser and shared across its tabs, not synchronized with the account. Prompts, usernames, API model identifiers, and unknown provider errors are preserved. Amounts remain in USD.
+
+To automatically delete old multi-user images and their visible history, set `IMAGE_RETENTION_DAYS` to a positive whole number in your deployment environment, for example `IMAGE_RETENTION_DAYS=30`, then recreate the app container (`docker compose up -d app`). An unset value or `0` disables retention; invalid values prevent startup. Local development reads the same setting from `.env.local` after restarting.
+
+The policy applies to **existing and future** multi-user generations, measured from their creation time in 24-hour days. An initial sweep runs after startup recovery, followed by hourly sweeps while the app runs. A generation becomes eligible strictly after its age exceeds the configured number of days; active requests are skipped. Cleanup works without an open browser and catches up after downtime. The existing single-process deployment requirement still applies.
+
+Expired files and prompts are deleted, and their entries disappear from visible history. Accounting records, shared balance, personal spending, and outstanding reconciliation are retained. Visible-history totals count only remaining images. Failed file removals remain in the garbage queue for the next sweep; tombstoned files remain inaccessible through the app. Logs report expired/removed/failed counts without prompts. Retention does not delete backups or any single-user filesystem/IndexedDB data. Take a coordinated backup before first enabling it if existing images need to be preserved.
+
 ## Account recovery
 
 Administrators can disable, enable, and reset regular accounts in the web interface. Disable and reset revoke all sessions. Reset replaces the authenticator secret; the old QR no longer works. QR codes are displayed only during provisioning/reset. The first code used to activate/login cannot be used again during the same accepted time window; wait for the next code if necessary.
@@ -108,6 +118,12 @@ The intentional upstream integration points are:
 - Instrumentation/configuration: initialize storage at server startup and package the native SQLite dependency.
 
 Keep upstream OpenAI request construction, model catalogs, pricing functions, and form components as the source of truth. When upstream adds a new result path, call settlement before writing files or emitting success, and ensure the request's authenticated owner is retained. Do not copy the route into a second implementation. Session-bound request headers protect against submitting an old tab's form under a new account's cookie.
+
+Display extensions live in `src/modules/preferences`. Shared components call its translation hook with English source text; missing translations fall back to that text. The root layout mounts the preference controls and the existing theme provider. Form changes are limited to displayed copy and semantic color classes; provider values and validation functions retain their upstream contracts. Known English errors are localized only at presentation boundaries. Keep image overlays, mask/markup canvas colors, and image bytes independent of the theme.
+
+Retention lives in `src/modules/multi-user/retention.ts`, started by the existing runtime initialization hook. It reuses transactional history deletion and the garbage queue, with no database migration or new HTTP endpoint. Configuration also adds one environment variable to Compose and the example environment file.
+
+When merging upstream: review new/changed English copy and add Chinese catalog entries; check new color classes in both themes; exercise generation, streaming, editing, and history in both languages; and rerun the retention/accounting tests. Keep locale, theme, and retention changes in separate commits when integrating. These boundaries reduce conflicts but do not eliminate conflicts in shared UI files.
 
 ## Verification
 

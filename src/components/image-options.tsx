@@ -8,11 +8,9 @@ import { Slider } from '@/components/ui/slider';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
     EXTENDED_QUALITIES,
+    getAvailableOutputFormats,
     GIF_FRAME_COUNT,
     GIF_FRAME_DURATION_MS,
-    MODEL_CAPABILITIES,
-    SVG_WRITER_MODELS,
-    getAvailableOutputFormats,
     type GptImageModel,
     type ImageBackground,
     type ImageComplexity,
@@ -20,6 +18,8 @@ import {
     type ImageModeration,
     type ImageOutputFormat,
     type ImageQuality,
+    MODEL_CAPABILITIES,
+    SVG_WRITER_MODELS,
     type SvgReasoningEffort,
     type SvgWriterModel
 } from '@/lib/models';
@@ -29,12 +29,13 @@ import {
     CUSTOM_SIZE_MAX_EDGE,
     CUSTOM_SIZE_MAX_PIXELS,
     CUSTOM_SIZE_MIN_PIXELS,
-    GIF_MAX_REQUEST_PIXELS,
     getGifSheetGrids,
     getPresetTooltip,
+    GIF_MAX_REQUEST_PIXELS,
     type SizePreset,
     type SizeValidation
 } from '@/lib/size-utils';
+import { usePreferences } from '@/modules/preferences/client';
 import {
     Brain,
     BrickWall,
@@ -107,19 +108,22 @@ const RadioItemWithIcon = ({
     id: string;
     label: string;
     Icon: React.ElementType;
-}) => (
-    <div className='flex items-center space-x-2'>
-        <RadioGroupItem
-            value={value}
-            id={id}
-            className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
-        />
-        <Label htmlFor={id} className='flex cursor-pointer items-center gap-2 text-base text-white/80'>
-            <Icon className='h-5 w-5 text-white/60' />
-            {label}
-        </Label>
-    </div>
-);
+}) => {
+    const { t } = usePreferences();
+    return (
+        <div className='flex items-center space-x-2'>
+            <RadioGroupItem
+                value={value}
+                id={id}
+                className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
+            />
+            <Label htmlFor={id} className='text-foreground/80 flex cursor-pointer items-center gap-2 text-base'>
+                <Icon className='text-foreground/60 h-5 w-5' />
+                {t(label)}
+            </Label>
+        </div>
+    );
+};
 
 const SIZE_PRESETS: { value: SizePreset; label: string; Icon: React.ElementType }[] = [
     { value: 'square', label: 'Square', Icon: Square },
@@ -136,7 +140,7 @@ const FORMAT_OPTIONS: Record<ImageOutputFormat, { label: string; Icon: React.Ele
 };
 
 export const SLIDER_CLASS =
-    'mt-3 [&>button]:border-black [&>button]:bg-white [&>button]:ring-offset-black [&>span:first-child]:h-1 [&>span:first-child>span]:bg-white';
+    'mt-3 [&>button]:border-background [&>button]:bg-foreground [&>button]:ring-offset-background [&>span:first-child]:h-1 [&>span:first-child>span]:bg-foreground';
 
 export function ImageOptions({
     mode,
@@ -167,6 +171,7 @@ export function ImageOptions({
     moderation,
     setModeration
 }: ImageOptionsProps) {
+    const { t, locale } = usePreferences();
     const id = (suffix: string) => `${mode}-${suffix}`;
     const capabilities = MODEL_CAPABILITIES[model];
     const availableFormats = getAvailableOutputFormats(model, mode);
@@ -203,14 +208,14 @@ export function ImageOptions({
     return (
         <>
             <div className='space-y-3'>
-                <Label className='block text-white'>{isGif ? 'Frame Size' : 'Size'}</Label>
+                <Label className='text-foreground block'>{isGif ? t('Frame Size') : t('Size')}</Label>
                 <RadioGroup
                     value={size}
                     onValueChange={(value) => setSize(value as SizePreset)}
                     disabled={disabled}
                     className='flex flex-wrap gap-x-5 gap-y-3'>
-                    <RadioItemWithIcon value='auto' id={id('size-auto')} label='Auto' Icon={Sparkles} />
-                    <RadioItemWithIcon value='custom' id={id('size-custom')} label='Custom' Icon={SquareDashed} />
+                    <RadioItemWithIcon value='auto' id={id('size-auto')} label={t('Auto')} Icon={Sparkles} />
+                    <RadioItemWithIcon value='custom' id={id('size-custom')} label={t('Custom')} Icon={SquareDashed} />
                     {!isGif &&
                         SIZE_PRESETS.map(({ value, label, Icon }) => (
                             <Tooltip key={value}>
@@ -219,7 +224,7 @@ export function ImageOptions({
                                         <RadioItemWithIcon
                                             value={value}
                                             id={id(`size-${value}`)}
-                                            label={label}
+                                            label={t(label)}
                                             Icon={Icon}
                                         />
                                     </div>
@@ -229,11 +234,11 @@ export function ImageOptions({
                         ))}
                 </RadioGroup>
                 {size === 'custom' && (
-                    <div className='space-y-2 rounded-md border border-white/10 bg-white/5 p-3'>
+                    <div className='border-foreground/10 bg-foreground/5 space-y-2 rounded-md border p-3'>
                         <div className='flex items-center gap-3'>
                             <div className='flex-1 space-y-1'>
-                                <Label htmlFor={id('custom-width')} className='text-xs text-white/70'>
-                                    Width (px)
+                                <Label htmlFor={id('custom-width')} className='text-foreground/70 text-xs'>
+                                    {t('Width (px)')}
                                 </Label>
                                 <Input
                                     id={id('custom-width')}
@@ -244,13 +249,13 @@ export function ImageOptions({
                                     value={customWidth}
                                     onChange={(e) => setCustomWidth(parseInt(e.target.value, 10) || 0)}
                                     disabled={disabled}
-                                    className='rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'
+                                    className='border-foreground/20 bg-background text-foreground focus:border-foreground/50 focus:ring-foreground/50 rounded-md border'
                                 />
                             </div>
-                            <span className='pt-5 text-white/60'>×</span>
+                            <span className='text-foreground/60 pt-5'>×</span>
                             <div className='flex-1 space-y-1'>
-                                <Label htmlFor={id('custom-height')} className='text-xs text-white/70'>
-                                    Height (px)
+                                <Label htmlFor={id('custom-height')} className='text-foreground/70 text-xs'>
+                                    {t('Height (px)')}
                                 </Label>
                                 <Input
                                     id={id('custom-height')}
@@ -261,53 +266,69 @@ export function ImageOptions({
                                     value={customHeight}
                                     onChange={(e) => setCustomHeight(parseInt(e.target.value, 10) || 0)}
                                     disabled={disabled}
-                                    className='rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'
+                                    className='border-foreground/20 bg-background text-foreground focus:border-foreground/50 focus:ring-foreground/50 rounded-md border'
                                 />
                             </div>
                         </div>
                         {isGif ? (
-                            <p className='text-xs text-white/50'>
-                                {frameCount} frames are rendered tiled into one{' '}
+                            <p className='text-foreground/50 text-xs'>
+                                {frameCount} {t('frames are rendered tiled into one')}{' '}
                                 {getGifSheetGrids(frameCount)
                                     .map(([columns, rows]) => `${columns}×${rows}`)
-                                    .join(' or ')}{' '}
-                                sheet. The sheet must meet the limits below, and the number of images × sheet pixels
-                                must stay within {GIF_MAX_REQUEST_PIXELS.toLocaleString()}.
+                                    .join(t(' or '))}{' '}
+                                {t(
+                                    'sheet. The sheet must meet the limits below, and the number of images × sheet pixels must stay within'
+                                )}{' '}
+                                {GIF_MAX_REQUEST_PIXELS.toLocaleString(locale)}.
                             </p>
                         ) : (
-                            <p className='text-xs text-white/50'>
-                                {(customWidth * customHeight).toLocaleString()} pixels (
-                                {(((customWidth * customHeight) / CUSTOM_SIZE_MAX_PIXELS) * 100).toFixed(1)}% of max) ·{' '}
+                            <p className='text-foreground/50 text-xs'>
+                                {(customWidth * customHeight).toLocaleString(locale)} {t('pixels (')}
+                                {(((customWidth * customHeight) / CUSTOM_SIZE_MAX_PIXELS) * 100).toFixed(1)}
+                                {t('% of max) ·')}{' '}
                                 {customWidth > 0 && customHeight > 0
-                                    ? `${(Math.max(customWidth, customHeight) / Math.min(customWidth, customHeight)).toFixed(2)}:1 ratio`
+                                    ? t('{v0}:1 ratio', {
+                                          v0: (
+                                              Math.max(customWidth, customHeight) / Math.min(customWidth, customHeight)
+                                          ).toFixed(2)
+                                      })
                                     : '—'}
                             </p>
                         )}
-                        {!sizeValidation.valid && <p className='text-xs text-red-400'>{sizeValidation.reason}</p>}
-                        <p className='text-xs text-white/40'>
-                            Constraints: multiples of {CUSTOM_SIZE_EDGE_MULTIPLE}, max edge {CUSTOM_SIZE_MAX_EDGE}px,
-                            aspect ratio ≤ {CUSTOM_SIZE_MAX_ASPECT}:1, {CUSTOM_SIZE_MIN_PIXELS.toLocaleString()} to{' '}
-                            {CUSTOM_SIZE_MAX_PIXELS.toLocaleString()} total pixels.
+                        {!sizeValidation.valid && (
+                            <p className='text-destructive text-xs'>{t(sizeValidation.reason)}</p>
+                        )}
+                        <p className='text-foreground/40 text-xs'>
+                            {t('Constraints: multiples of')} {CUSTOM_SIZE_EDGE_MULTIPLE}
+                            {t(', max edge')} {CUSTOM_SIZE_MAX_EDGE}
+                            {t('px, aspect ratio ≤')} {CUSTOM_SIZE_MAX_ASPECT}:1,{' '}
+                            {CUSTOM_SIZE_MIN_PIXELS.toLocaleString(locale)} {t('to')}{' '}
+                            {CUSTOM_SIZE_MAX_PIXELS.toLocaleString(locale)} {t('total pixels.')}
                         </p>
                     </div>
                 )}
             </div>
 
             <div className='space-y-3'>
-                <Label className='block text-white'>Quality</Label>
+                <Label className='text-foreground block'>{t('Quality')}</Label>
                 <RadioGroup
                     value={quality}
                     onValueChange={(value) => setQuality(value as ImageQuality)}
                     disabled={disabled}
                     className='flex flex-wrap gap-x-5 gap-y-3'>
-                    <RadioItemWithIcon value='auto' id={id('quality-auto')} label='Auto' Icon={Sparkles} />
-                    <RadioItemWithIcon value='low' id={id('quality-low')} label='Low' Icon={Tally1} />
-                    <RadioItemWithIcon value='medium' id={id('quality-medium')} label='Medium' Icon={Tally2} />
-                    <RadioItemWithIcon value='high' id={id('quality-high')} label='High' Icon={Tally3} />
+                    <RadioItemWithIcon value='auto' id={id('quality-auto')} label={t('Auto')} Icon={Sparkles} />
+                    <RadioItemWithIcon value='low' id={id('quality-low')} label={t('Low')} Icon={Tally1} />
+                    <RadioItemWithIcon value='medium' id={id('quality-medium')} label={t('Medium')} Icon={Tally2} />
+                    <RadioItemWithIcon value='high' id={id('quality-high')} label={t('High')} Icon={Tally3} />
                     {capabilities.extendedQuality && (
                         <>
-                            <RadioItemWithIcon value='xhigh' id={id('quality-xhigh')} label='XHigh' Icon={Tally4} />
-                            <RadioItemWithIcon value='max' id={id('quality-max')} label='Max' Icon={Tally5} />
+                            <RadioItemWithIcon
+                                value='xhigh'
+                                id={id('quality-xhigh')}
+                                label={t('XHigh')}
+                                Icon={Tally4}
+                            />
+                            <RadioItemWithIcon value='max' id={id('quality-max')} label={t('Max')} Icon={Tally5} />
                         </>
                     )}
                 </RadioGroup>
@@ -315,43 +336,49 @@ export function ImageOptions({
 
             {capabilities.complexity && (
                 <div className='space-y-3'>
-                    <Label className='block text-white'>Complexity</Label>
+                    <Label className='text-foreground block'>{t('Complexity')}</Label>
                     <RadioGroup
                         value={complexity}
                         onValueChange={(value) => setComplexity(value as ImageComplexity)}
                         disabled={disabled}
                         className='flex flex-wrap gap-x-5 gap-y-3'>
-                        <RadioItemWithIcon value='low' id={id('complexity-low')} label='Low' Icon={Tally1} />
-                        <RadioItemWithIcon value='medium' id={id('complexity-medium')} label='Medium' Icon={Tally2} />
-                        <RadioItemWithIcon value='high' id={id('complexity-high')} label='High' Icon={Tally3} />
+                        <RadioItemWithIcon value='low' id={id('complexity-low')} label={t('Low')} Icon={Tally1} />
+                        <RadioItemWithIcon
+                            value='medium'
+                            id={id('complexity-medium')}
+                            label={t('Medium')}
+                            Icon={Tally2}
+                        />
+                        <RadioItemWithIcon value='high' id={id('complexity-high')} label={t('High')} Icon={Tally3} />
                     </RadioGroup>
-                    <p className='text-xs text-white/40'>
-                        How much the model plans before rendering. Lower suits focused edits; higher helps dense text
-                        and complex layouts.
+                    <p className='text-foreground/40 text-xs'>
+                        {t(
+                            'How much the model plans before rendering. Lower suits focused edits; higher helps dense text and complex layouts.'
+                        )}
                     </p>
                 </div>
             )}
 
             <div className='space-y-3'>
-                <Label className='block text-white'>Background</Label>
+                <Label className='text-foreground block'>{t('Background')}</Label>
                 <RadioGroup
                     value={background}
                     onValueChange={(value) => setBackground(value as ImageBackground)}
                     disabled={disabled}
                     className='flex flex-wrap gap-x-5 gap-y-3'>
-                    <RadioItemWithIcon value='auto' id={id('bg-auto')} label='Auto' Icon={Sparkles} />
-                    <RadioItemWithIcon value='opaque' id={id('bg-opaque')} label='Opaque' Icon={BrickWall} />
+                    <RadioItemWithIcon value='auto' id={id('bg-auto')} label={t('Auto')} Icon={Sparkles} />
+                    <RadioItemWithIcon value='opaque' id={id('bg-opaque')} label={t('Opaque')} Icon={BrickWall} />
                     <RadioItemWithIcon
                         value='transparent'
                         id={id('bg-transparent')}
-                        label='Transparent'
+                        label={t('Transparent')}
                         Icon={Eraser}
                     />
                 </RadioGroup>
             </div>
 
             <div className='space-y-3'>
-                <Label className='block text-white'>Output Format</Label>
+                <Label className='text-foreground block'>{t('Output Format')}</Label>
                 <RadioGroup
                     value={outputFormat}
                     onValueChange={handleOutputFormatChange}
@@ -371,8 +398,8 @@ export function ImageOptions({
 
             {showCompression && (
                 <div className='space-y-2 pt-2 transition-opacity duration-300'>
-                    <Label htmlFor={id('compression-slider')} className='text-white'>
-                        Compression: {compression[0]}%
+                    <Label htmlFor={id('compression-slider')} className='text-foreground'>
+                        {t('Compression:')} {compression[0]}%
                     </Label>
                     <Slider
                         id={id('compression-slider')}
@@ -388,10 +415,10 @@ export function ImageOptions({
             )}
 
             {isGif && (
-                <div className='space-y-4 rounded-md border border-white/10 bg-white/5 p-3'>
+                <div className='border-foreground/10 bg-foreground/5 space-y-4 rounded-md border p-3'>
                     <div className='space-y-2'>
-                        <Label htmlFor={id('frame-count-slider')} className='text-white'>
-                            Frames: {frameCount}
+                        <Label htmlFor={id('frame-count-slider')} className='text-foreground'>
+                            {t('Frames:')} {frameCount}
                         </Label>
                         <Slider
                             id={id('frame-count-slider')}
@@ -405,8 +432,8 @@ export function ImageOptions({
                         />
                     </div>
                     <div className='space-y-2'>
-                        <Label htmlFor={id('frame-duration-slider')} className='text-white'>
-                            Frame Duration: {frameDurationMs} ms
+                        <Label htmlFor={id('frame-duration-slider')} className='text-foreground'>
+                            {t('Frame Duration:')} {frameDurationMs} {t('ms')}
                         </Label>
                         <Slider
                             id={id('frame-duration-slider')}
@@ -419,18 +446,19 @@ export function ImageOptions({
                             className={SLIDER_CLASS}
                         />
                     </div>
-                    <p className='text-xs text-white/50'>
-                        {loopSeconds.toFixed(2)}s loop at {(1000 / frameDurationMs).toFixed(1)} fps. Describe the motion
-                        and how it loops in the prompt.
+                    <p className='text-foreground/50 text-xs'>
+                        {loopSeconds.toFixed(2)}
+                        {t('s loop at')} {(1000 / frameDurationMs).toFixed(1)}{' '}
+                        {t('fps. Describe the motion and how it loops in the prompt.')}
                     </p>
                 </div>
             )}
 
             {outputFormat === 'svg' && svg && (
-                <div className='space-y-4 rounded-md border border-white/10 bg-white/5 p-3'>
+                <div className='border-foreground/10 bg-foreground/5 space-y-4 rounded-md border p-3'>
                     <div className='space-y-1.5'>
-                        <Label htmlFor={id('svg-model-select')} className='text-white'>
-                            SVG Writer Model
+                        <Label htmlFor={id('svg-model-select')} className='text-foreground'>
+                            {t('SVG Writer Model')}
                         </Label>
                         <Select
                             value={svg.model}
@@ -448,12 +476,12 @@ export function ImageOptions({
                             disabled={disabled}>
                             <SelectTrigger
                                 id={id('svg-model-select')}
-                                className='w-[220px] rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'>
+                                className='border-foreground/20 bg-background text-foreground focus:border-foreground/50 focus:ring-foreground/50 w-[220px] rounded-md border'>
                                 <SelectValue />
                             </SelectTrigger>
-                            <SelectContent className='border-white/20 bg-black text-white'>
+                            <SelectContent className='border-foreground/20 bg-background text-foreground'>
                                 {(Object.keys(SVG_WRITER_MODELS) as SvgWriterModel[]).map((writer) => (
-                                    <SelectItem key={writer} value={writer} className='focus:bg-white/10'>
+                                    <SelectItem key={writer} value={writer} className='focus:bg-foreground/10'>
                                         {writer}
                                     </SelectItem>
                                 ))}
@@ -461,7 +489,7 @@ export function ImageOptions({
                         </Select>
                     </div>
                     <div className='space-y-3'>
-                        <Label className='block text-white'>Writer Reasoning</Label>
+                        <Label className='text-foreground block'>{t('Writer Reasoning')}</Label>
                         <RadioGroup
                             value={svg.effort ?? 'default'}
                             onValueChange={(value) =>
@@ -472,7 +500,7 @@ export function ImageOptions({
                             <RadioItemWithIcon
                                 value='default'
                                 id={id('svg-effort-default')}
-                                label='Default'
+                                label={t('Default')}
                                 Icon={Sparkles}
                             />
                             {SVG_WRITER_MODELS[svg.model].map((effort) => (
@@ -486,22 +514,23 @@ export function ImageOptions({
                             ))}
                         </RadioGroup>
                     </div>
-                    <p className='text-xs text-white/50'>
-                        The image model draws a reference image; the writer model turns it into SVG. Quality and
-                        complexity apply to the reference image. One image per request.
+                    <p className='text-foreground/50 text-xs'>
+                        {t(
+                            'The image model draws a reference image; the writer model turns it into SVG. Quality and complexity apply to the reference image. One image per request.'
+                        )}
                     </p>
                 </div>
             )}
 
             <div className='space-y-3'>
-                <Label className='block text-white'>Moderation Level</Label>
+                <Label className='text-foreground block'>{t('Moderation Level')}</Label>
                 <RadioGroup
                     value={moderation}
                     onValueChange={(value) => setModeration(value as ImageModeration)}
                     disabled={disabled}
                     className='flex flex-wrap gap-x-5 gap-y-3'>
-                    <RadioItemWithIcon value='auto' id={id('mod-auto')} label='Auto' Icon={ShieldCheck} />
-                    <RadioItemWithIcon value='low' id={id('mod-low')} label='Low' Icon={ShieldAlert} />
+                    <RadioItemWithIcon value='auto' id={id('mod-auto')} label={t('Auto')} Icon={ShieldCheck} />
+                    <RadioItemWithIcon value='low' id={id('mod-low')} label={t('Low')} Icon={ShieldAlert} />
                 </RadioGroup>
             </div>
         </>

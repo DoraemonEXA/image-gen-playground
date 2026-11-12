@@ -12,8 +12,8 @@ import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-    GPT_IMAGE_MODELS,
     getStreamingBlockedReason,
+    GPT_IMAGE_MODELS,
     type GptImageModel,
     type ImageBackground,
     type ImageComplexity,
@@ -22,7 +22,8 @@ import {
     type ImageOutputFormat,
     type ImageQuality
 } from '@/lib/models';
-import { validateSizeSelection, type SizePreset } from '@/lib/size-utils';
+import { type SizePreset, validateSizeSelection } from '@/lib/size-utils';
+import { usePreferences } from '@/modules/preferences/client';
 import { HelpCircle, Loader2, Lock, LockOpen } from 'lucide-react';
 import * as React from 'react';
 
@@ -125,6 +126,7 @@ export function GenerationForm({
     partialImages,
     setPartialImages
 }: GenerationFormProps) {
+    const { t } = usePreferences();
     const showCompression = outputFormat === 'jpeg' || outputFormat === 'webp';
     const customSizeValidation = validateSizeSelection(size, customWidth, customHeight, outputFormat, frameCount, n[0]);
     const customSizeInvalid = !customSizeValidation.valid;
@@ -163,24 +165,26 @@ export function GenerationForm({
     };
 
     return (
-        <Card className='flex h-full w-full flex-col overflow-hidden rounded-lg border border-white/10 bg-black'>
-            <CardHeader className='flex items-start justify-between border-b border-white/10 pb-4'>
+        <Card className='border-foreground/10 bg-background flex h-full w-full flex-col overflow-hidden rounded-lg border'>
+            <CardHeader className='border-foreground/10 flex items-start justify-between border-b pb-4'>
                 <div>
                     <div className='flex items-center'>
-                        <CardTitle className='py-1 text-lg font-medium text-white'>Generate Image</CardTitle>
+                        <CardTitle className='text-foreground py-1 text-lg font-medium'>
+                            {t('Generate Image')}
+                        </CardTitle>
                         {isPasswordRequiredByBackend && (
                             <Button
                                 variant='ghost'
                                 size='icon'
                                 onClick={onOpenPasswordDialog}
-                                className='ml-2 text-white/60 hover:text-white'
-                                aria-label='Configure Password'>
+                                className='text-foreground/60 hover:text-foreground ml-2'
+                                aria-label={t('Configure Password')}>
                                 {clientPasswordHash ? <Lock className='h-4 w-4' /> : <LockOpen className='h-4 w-4' />}
                             </Button>
                         )}
                     </div>
-                    <CardDescription className='mt-1 text-white/60'>
-                        Create a new image from a text prompt.
+                    <CardDescription className='text-foreground/60 mt-1'>
+                        {t('Create a new image from a text prompt.')}
                     </CardDescription>
                 </div>
                 <ModeToggle currentMode={currentMode} onModeChange={onModeChange} />
@@ -188,8 +192,8 @@ export function GenerationForm({
             <form onSubmit={handleSubmit} className='flex h-full flex-1 flex-col overflow-hidden'>
                 <CardContent className='flex-1 space-y-5 overflow-y-auto p-4'>
                     <div className='space-y-1.5'>
-                        <Label htmlFor='model-select' className='text-white'>
-                            Model
+                        <Label htmlFor='model-select' className='text-foreground'>
+                            {t('Model')}
                         </Label>
                         <div className='flex items-center gap-4'>
                             <Select
@@ -198,12 +202,12 @@ export function GenerationForm({
                                 disabled={isLoading}>
                                 <SelectTrigger
                                     id='model-select'
-                                    className='w-[220px] rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'>
-                                    <SelectValue placeholder='Select model' />
+                                    className='border-foreground/20 bg-background text-foreground focus:border-foreground/50 focus:ring-foreground/50 w-[220px] rounded-md border'>
+                                    <SelectValue placeholder={t('Select model')} />
                                 </SelectTrigger>
-                                <SelectContent className='border-white/20 bg-black text-white'>
+                                <SelectContent className='border-foreground/20 bg-background text-foreground'>
                                     {GPT_IMAGE_MODELS.map((id) => (
-                                        <SelectItem key={id} value={id} className='focus:bg-white/10'>
+                                        <SelectItem key={id} value={id} className='focus:bg-foreground/10'>
                                             {id}
                                         </SelectItem>
                                     ))}
@@ -217,18 +221,21 @@ export function GenerationForm({
                                             checked={streaming}
                                             onCheckedChange={(checked) => setEnableStreaming(!!checked)}
                                             disabled={isLoading || !!streamingBlockedReason}
-                                            className='border-white/40 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-white data-[state=checked]:bg-white data-[state=checked]:text-black'
+                                            className='border-foreground/40 data-[state=checked]:border-foreground data-[state=checked]:bg-foreground data-[state=checked]:text-background disabled:cursor-not-allowed disabled:opacity-50'
                                         />
                                         <Label
                                             htmlFor='enable-streaming'
-                                            className={`text-sm ${streamingBlockedReason ? 'cursor-not-allowed text-white/40' : 'cursor-pointer text-white/80'}`}>
-                                            Enable Streaming
+                                            className={`text-sm ${streamingBlockedReason ? 'text-foreground/40 cursor-not-allowed' : 'text-foreground/80 cursor-pointer'}`}>
+                                            {t('Enable Streaming')}
                                         </Label>
                                     </div>
                                 </TooltipTrigger>
                                 <TooltipContent className='max-w-[250px]'>
-                                    {streamingBlockedReason ??
-                                        'Shows partial preview images as they are generated, providing a more interactive experience.'}
+                                    {streamingBlockedReason
+                                        ? t(streamingBlockedReason)
+                                        : t(
+                                              'Shows partial preview images as they are generated, providing a more interactive experience.'
+                                          )}
                                 </TooltipContent>
                             </Tooltip>
                         </div>
@@ -237,13 +244,15 @@ export function GenerationForm({
                     {streaming && (
                         <div className='space-y-3'>
                             <div className='flex items-center gap-2'>
-                                <Label className='text-white'>Preview Images</Label>
+                                <Label className='text-foreground'>{t('Preview Images')}</Label>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
-                                        <HelpCircle className='h-4 w-4 cursor-help text-white/40 hover:text-white/60' />
+                                        <HelpCircle className='text-foreground/40 hover:text-foreground/60 h-4 w-4 cursor-help' />
                                     </TooltipTrigger>
                                     <TooltipContent className='max-w-[250px]'>
-                                        Each preview image adds ~$0.003 to the cost (100 additional output tokens).
+                                        {t(
+                                            'Each preview image adds ~$0.003 to the cost (100 additional output tokens).'
+                                        )}
                                     </TooltipContent>
                                 </Tooltip>
                             </div>
@@ -256,9 +265,9 @@ export function GenerationForm({
                                     <RadioGroupItem
                                         value='1'
                                         id='partial-1'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='partial-1' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='partial-1' className='text-foreground/80 cursor-pointer'>
                                         1
                                     </Label>
                                 </div>
@@ -266,9 +275,9 @@ export function GenerationForm({
                                     <RadioGroupItem
                                         value='2'
                                         id='partial-2'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='partial-2' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='partial-2' className='text-foreground/80 cursor-pointer'>
                                         2
                                     </Label>
                                 </div>
@@ -276,9 +285,9 @@ export function GenerationForm({
                                     <RadioGroupItem
                                         value='3'
                                         id='partial-3'
-                                        className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
+                                        className='border-foreground/40 text-foreground data-[state=checked]:border-foreground data-[state=checked]:text-foreground'
                                     />
-                                    <Label htmlFor='partial-3' className='cursor-pointer text-white/80'>
+                                    <Label htmlFor='partial-3' className='text-foreground/80 cursor-pointer'>
                                         3
                                     </Label>
                                 </div>
@@ -287,23 +296,23 @@ export function GenerationForm({
                     )}
 
                     <div className='space-y-1.5'>
-                        <Label htmlFor='prompt' className='text-white'>
-                            Prompt
+                        <Label htmlFor='prompt' className='text-foreground'>
+                            {t('Prompt')}
                         </Label>
                         <Textarea
                             id='prompt'
-                            placeholder='e.g., A photorealistic cat astronaut floating in space'
+                            placeholder={t('e.g., A photorealistic cat astronaut floating in space')}
                             value={prompt}
                             onChange={(e) => setPrompt(e.target.value)}
                             required
                             disabled={isLoading}
-                            className='min-h-[80px] rounded-md border border-white/20 bg-black text-white placeholder:text-white/40 focus:border-white/50 focus:ring-white/50'
+                            className='border-foreground/20 bg-background text-foreground placeholder:text-foreground/40 focus:border-foreground/50 focus:ring-foreground/50 min-h-[80px] rounded-md border'
                         />
                     </div>
 
                     <div className='space-y-2'>
-                        <Label htmlFor='n-slider' className='text-white'>
-                            Number of Images: {n[0]}
+                        <Label htmlFor='n-slider' className='text-foreground'>
+                            {t('Number of Images:')} {n[0]}
                         </Label>
                         <Slider
                             id='n-slider'
@@ -347,13 +356,13 @@ export function GenerationForm({
                         setModeration={setModeration}
                     />
                 </CardContent>
-                <CardFooter className='border-t border-white/10 p-4'>
+                <CardFooter className='border-foreground/10 border-t p-4'>
                     <Button
                         type='submit'
                         disabled={isLoading || !prompt || customSizeInvalid}
-                        className='flex w-full items-center justify-center gap-2 rounded-md bg-white text-black hover:bg-white/90 disabled:bg-white/10 disabled:text-white/40'>
+                        className='bg-foreground text-background hover:bg-foreground/90 disabled:bg-foreground/10 disabled:text-foreground/40 flex w-full items-center justify-center gap-2 rounded-md'>
                         {isLoading && <Loader2 className='h-4 w-4 animate-spin' />}
-                        {isLoading ? 'Generating...' : 'Generate'}
+                        {isLoading ? t('Generating...') : t('Generate')}
                     </Button>
                 </CardFooter>
             </form>

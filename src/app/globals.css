@@ -5,6 +5,9 @@
 
 @theme inline {
   --color-background: var(--background);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -44,6 +47,9 @@
 }
 
 :root {
+  --success: #15803d;
+  --warning: #92400e;
+  --info: #1d4ed8;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -79,6 +85,9 @@
 }
 
 .dark {
+  --success: #4ade80;
+  --warning: #fcd34d;
+  --info: #93c5fd;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

@@ -1,5 +1,7 @@
 # <img src="./public/favicon.svg" alt="Project Logo" width="30" height="30" style="vertical-align: middle; margin-right: 8px;"> GPT Image Playground
 
+> **This fork defaults to multi-user mode.** It adds admin-provisioned authenticator login, private account history, and an admin-funded shared balance with automatic estimated API deductions. Follow the [multi-user deployment and setup guide](docs/MULTI_USER.md) for Docker deployment and first-admin setup. To use the original instructions below, explicitly set `APP_MODE=single-user`.
+
 A web-based playground to interact with OpenAI's GPT image models (`gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst`, and `gpt-image-2`) for generating and editing images.
 
 > **Note:** The playground defaults to `gpt-image-2.6-flare`, OpenAI's fast default model. All five models support arbitrary resolutions up to 4K (with constraint validation), transparent backgrounds (preview on `gpt-image-2`) and markup-guided edits. The `gpt-image-2.5` and `gpt-image-2.6` models add the `xhigh` and `max` quality tiers. The `gpt-image-2.6` models add the `complexity` setting, animated GIF output and SVG output. Retired models (`gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`) can no longer be selected, but images generated with them remain visible in the history with their original cost breakdown.

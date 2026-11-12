@@ -1,0 +1,43 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    environment:
+      APP_MODE: ${APP_MODE:-multi-user}
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+      AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:?Set AUTH_ENCRYPTION_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}
+      OPENAI_API_BASE_URL: ${OPENAI_API_BASE_URL:-https://api.openai.com/v1}
+      APP_PASSWORD: ${APP_PASSWORD:-}
+      APP_DATA_DIR: /data
+      NEXT_PUBLIC_IMAGE_STORAGE_MODE: fs
+      MAX_ACTIVE_PER_USER: ${MAX_ACTIVE_PER_USER:-1}
+      MAX_ACTIVE_GLOBAL: ${MAX_ACTIVE_GLOBAL:-4}
+      TRUST_PROXY: 'true'
+    volumes:
+      - playground-data:/data
+      - legacy-images:/app/generated-images
+    # Only Caddy is public; its X-Real-IP header is the trusted source for throttling.
+    expose:
+      - '3000'
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+volumes:
+  playground-data:
+  legacy-images:
+  caddy-data:
+  caddy-config:

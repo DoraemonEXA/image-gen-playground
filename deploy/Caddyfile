@@ -1,0 +1,9 @@
+{$APP_ORIGIN} {
+    request_body {
+        max_size 100MB
+    }
+    reverse_proxy app:3000 {
+        header_up X-Real-IP {remote_host}
+        flush_interval -1
+    }
+}

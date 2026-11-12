@@ -34,6 +34,7 @@ import * as React from 'react';
 
 type HistoryPanelProps = {
     history: HistoryMetadata[];
+    totalSummary?: { totalCost: number; totalImages: number };
     onSelectImage: (item: HistoryMetadata) => void;
     onClearHistory: () => void;
     getImageSrc: (filename: string) => string | undefined;
@@ -73,6 +74,7 @@ const RATE_GROUPS = GPT_IMAGE_MODELS.reduce<{ rates: ModelRates; models: GptImag
 
 function HistoryPanelImpl({
     history,
+    totalSummary,
     onSelectImage,
     onClearHistory,
     getImageSrc,
@@ -83,12 +85,13 @@ function HistoryPanelImpl({
     deletePreferenceDialogValue,
     onDeletePreferenceDialogChange
 }: HistoryPanelProps) {
-    const [openPromptDialogTimestamp, setOpenPromptDialogTimestamp] = React.useState<number | null>(null);
-    const [openCostDialogTimestamp, setOpenCostDialogTimestamp] = React.useState<number | null>(null);
+    const [openPromptDialogTimestamp, setOpenPromptDialogTimestamp] = React.useState<string | number | null>(null);
+    const [openCostDialogTimestamp, setOpenCostDialogTimestamp] = React.useState<string | number | null>(null);
     const [isTotalCostDialogOpen, setIsTotalCostDialogOpen] = React.useState(false);
-    const [copiedTimestamp, setCopiedTimestamp] = React.useState<number | null>(null);
+    const [copiedTimestamp, setCopiedTimestamp] = React.useState<string | number | null>(null);
 
     const { totalCost, totalImages } = React.useMemo(() => {
+        if (totalSummary) return totalSummary;
         let cost = 0;
         let images = 0;
         history.forEach((item) => {
@@ -99,11 +102,11 @@ function HistoryPanelImpl({
         });
 
         return { totalCost: Math.round(cost * 10000) / 10000, totalImages: images };
-    }, [history]);
+    }, [history, totalSummary]);
 
     const averageCost = totalImages > 0 ? totalCost / totalImages : 0;
 
-    const handleCopy = async (text: string | null | undefined, timestamp: number) => {
+    const handleCopy = async (text: string | null | undefined, timestamp: string | number) => {
         if (!text) return;
         try {
             await navigator.clipboard.writeText(text);
@@ -197,7 +200,7 @@ function HistoryPanelImpl({
                             const firstImage = item.images?.[0];
                             const imageCount = item.images?.length ?? 0;
                             const isMultiImage = imageCount > 1;
-                            const itemKey = item.timestamp;
+                            const itemKey = item.id ?? item.timestamp;
                             const originalStorageMode = item.storageModeUsed || 'fs';
                             const outputFormat = item.output_format || 'png';
                             const model = item.model ?? 'gpt-image-1';
@@ -213,6 +216,12 @@ function HistoryPanelImpl({
 
                             return (
                                 <div key={itemKey} className='flex flex-col'>
+                                    {item.state && item.state !== 'complete' && (
+                                        <p className='text-xs text-amber-300'>Saved result · {item.state}</p>
+                                    )}
+                                    {item.accounting === 'needs_reconciliation' && (
+                                        <p className='text-xs text-amber-300'>Cost awaiting reconciliation</p>
+                                    )}
                                     <div className='group relative'>
                                         <button
                                             onClick={() => onSelectImage(item)}
@@ -452,7 +461,7 @@ function HistoryPanelImpl({
                                         {item.frame_count && (
                                             <p>
                                                 <span className='font-medium text-white/80'>Frames:</span>{' '}
-                                                {item.frame_count} × {item.frame_duration_ms}ms
+                                                {item.frame_count} 脳 {item.frame_duration_ms}ms
                                             </p>
                                         )}
                                         <p>

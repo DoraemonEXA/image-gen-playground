@@ -31,6 +31,8 @@ import {
     type SvgWriterModel
 } from '@/lib/models';
 import { getPresetDimensions } from '@/lib/size-utils';
+import { AccountRuntime, useAccountRuntime, loadPrivateHistory } from '@/modules/multi-user/client';
+import type { ServerHistory } from '@/modules/multi-user/history';
 import { useLiveQuery } from 'dexie-react-hooks';
 import type { ImagesResponse } from 'openai/resources/images';
 import * as React from 'react';
@@ -40,6 +42,9 @@ type HistoryImage = {
 };
 
 export type HistoryMetadata = {
+    id?: string;
+    state?: string;
+    accounting?: string;
     timestamp: number;
     images: HistoryImage[];
     storageModeUsed?: 'fs' | 'indexeddb';
@@ -71,19 +76,19 @@ const explicitModeClient = process.env.NEXT_PUBLIC_IMAGE_STORAGE_MODE;
 const vercelEnvClient = process.env.NEXT_PUBLIC_VERCEL_ENV;
 const isOnVercelClient = vercelEnvClient === 'production' || vercelEnvClient === 'preview';
 
-let effectiveStorageModeClient: 'fs' | 'indexeddb';
+let legacyStorageModeClient: 'fs' | 'indexeddb';
 
 if (explicitModeClient === 'fs') {
-    effectiveStorageModeClient = 'fs';
+    legacyStorageModeClient = 'fs';
 } else if (explicitModeClient === 'indexeddb') {
-    effectiveStorageModeClient = 'indexeddb';
+    legacyStorageModeClient = 'indexeddb';
 } else if (isOnVercelClient) {
-    effectiveStorageModeClient = 'indexeddb';
+    legacyStorageModeClient = 'indexeddb';
 } else {
-    effectiveStorageModeClient = 'fs';
+    legacyStorageModeClient = 'fs';
 }
 console.log(
-    `Client Effective Storage Mode: ${effectiveStorageModeClient} (Explicit: ${explicitModeClient || 'unset'}, Vercel Env: ${vercelEnvClient || 'N/A'})`
+    `Client Effective Storage Mode: ${legacyStorageModeClient} (Explicit: ${explicitModeClient || 'unset'}, Vercel Env: ${vercelEnvClient || 'N/A'})`
 );
 
 type ApiImageResponseItem = {
@@ -110,8 +115,24 @@ function getConditionalParams(
 }
 
 export default function HomePage() {
+    return (
+        <AccountRuntime>
+            <Playground />
+        </AccountRuntime>
+    );
+}
+
+function Playground() {
+    const account = useAccountRuntime();
+    const { multi, fetch, refresh: refreshAccount } = account;
+    const effectiveStorageModeClient = multi ? 'fs' : legacyStorageModeClient;
+    const [historyCursor, setHistoryCursor] = React.useState<string | null>(null);
+    const [historySummary, setHistorySummary] = React.useState<{ totalCost: number; totalImages: number }>();
+
     const [mode, setMode] = React.useState<ImageMode>('generate');
-    const [isPasswordRequiredByBackend, setIsPasswordRequiredByBackend] = React.useState<boolean | null>(null);
+    const [isPasswordRequiredByBackend, setIsPasswordRequiredByBackend] = React.useState<boolean | null>(
+        multi ? false : null
+    );
     const [clientPasswordHash, setClientPasswordHash] = React.useState<string | null>(null);
     const [isLoading, setIsLoading] = React.useState(false);
     const [generationStartTime, setGenerationStartTime] = React.useState<number | null>(null);
@@ -121,6 +142,15 @@ export default function HomePage() {
     const [imageOutputView, setImageOutputView] = React.useState<'grid' | number>('grid');
     const [history, setHistory] = React.useState<HistoryMetadata[]>([]);
     const [isInitialLoad, setIsInitialLoad] = React.useState(true);
+    const refreshPrivateHistory = React.useCallback(
+        async (cursor?: string) => {
+            const data = await loadPrivateHistory({ fetch }, cursor);
+            setHistory((previous) => (cursor ? [...previous, ...data.items] : data.items));
+            setHistoryCursor(data.nextCursor);
+            setHistorySummary(data.summary);
+        },
+        [fetch]
+    );
     const blobUrlCacheRef = React.useRef<Map<string, string>>(new Map());
     const [isPasswordDialogOpen, setIsPasswordDialogOpen] = React.useState(false);
     const [passwordDialogContext, setPasswordDialogContext] = React.useState<'initial' | 'retry'>('initial');
@@ -129,7 +159,10 @@ export default function HomePage() {
     const [itemToDeleteConfirm, setItemToDeleteConfirm] = React.useState<HistoryMetadata | null>(null);
     const [dialogCheckboxStateSkipConfirm, setDialogCheckboxStateSkipConfirm] = React.useState<boolean>(false);
 
-    const allDbImages = useLiveQuery<ImageRecord[] | undefined>(() => db.images.toArray(), []);
+    const allDbImages = useLiveQuery<ImageRecord[] | undefined>(
+        () => (multi ? undefined : db.images.toArray()),
+        [multi]
+    );
 
     const [editImageFiles, setEditImageFiles] = React.useState<File[]>([]);
     const [editSourceImagePreviewUrls, setEditSourceImagePreviewUrls] = React.useState<string[]>([]);
@@ -214,6 +247,14 @@ export default function HomePage() {
     }, [editSourceImagePreviewUrls]);
 
     React.useEffect(() => {
+        if (multi) {
+            queueMicrotask(() => {
+                void refreshPrivateHistory()
+                    .catch((error) => setError(error.message))
+                    .finally(() => setIsInitialLoad(false));
+            });
+            return;
+        }
         let cancelled = false;
 
         queueMicrotask(() => {
@@ -240,9 +281,10 @@ export default function HomePage() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [multi, refreshPrivateHistory]);
 
     React.useEffect(() => {
+        if (multi) return;
         const fetchAuthStatus = async () => {
             try {
                 const response = await fetch('/api/auth-status');
@@ -272,17 +314,17 @@ export default function HomePage() {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [multi, fetch]);
 
     React.useEffect(() => {
-        if (!isInitialLoad) {
+        if (!multi && !isInitialLoad) {
             try {
                 localStorage.setItem('openaiImageHistory', JSON.stringify(history));
             } catch (e) {
                 console.error('Failed to save history to localStorage:', e);
             }
         }
-    }, [history, isInitialLoad]);
+    }, [history, isInitialLoad, multi]);
 
     React.useEffect(() => {
         return () => {
@@ -388,12 +430,15 @@ export default function HomePage() {
         images: ApiImageResponseItem[],
         usage: ApiUsage | undefined,
         durationMs: number,
-        svgUsage?: ImagesResponse.SvgUsage
+        svgUsage?: ImagesResponse.SvgUsage,
+        serverHistory?: ServerHistory
     ) => {
+        if (!account.isCurrent()) return;
+        if (multi && !serverHistory) throw new Error('Server history was not returned. Reload to check saved results.');
         const isGenerate = mode === 'generate';
         const currentModel = isGenerate ? genModel : editModel;
         const outputFormat = isGenerate ? genOutputFormat : editOutputFormat;
-        const newHistoryEntry: HistoryMetadata = {
+        const newHistoryEntry: HistoryMetadata = serverHistory ?? {
             timestamp: Date.now(),
             images: images.map((img) => ({ filename: img.filename })),
             storageModeUsed: effectiveStorageModeClient,
@@ -462,6 +507,10 @@ export default function HomePage() {
         setImageOutputView(processedImages.length > 1 ? 'grid' : 0);
         setStreamingPreviewImages(new Map());
         setHistory((prevHistory) => [newHistoryEntry, ...prevHistory]);
+        if (multi) {
+            await refreshPrivateHistory();
+            await refreshAccount();
+        }
     };
 
     const handleApiCall = async (formData: GenerationFormData | EditingFormData) => {
@@ -613,16 +662,26 @@ export default function HomePage() {
                                     durationMs = Date.now() - startTime;
 
                                     if (event.images && event.images.length > 0) {
-                                        await processApiImages(event.images, event.usage, durationMs);
+                                        await processApiImages(
+                                            event.images,
+                                            event.usage,
+                                            durationMs,
+                                            undefined,
+                                            event.history
+                                        );
                                     }
                                 }
                             } catch (parseError) {
-                                console.error('Error parsing SSE event:', parseError);
+                                throw parseError;
                             }
                         }
                     }
                 }
 
+                if (multi) {
+                    await refreshPrivateHistory();
+                    await refreshAccount();
+                }
                 return; // Exit early for streaming
             }
 
@@ -643,13 +702,17 @@ export default function HomePage() {
 
             if (result.images && result.images.length > 0) {
                 durationMs = Date.now() - startTime;
-                await processApiImages(result.images, result.usage, durationMs, result.svg_usage);
+                await processApiImages(result.images, result.usage, durationMs, result.svg_usage, result.history);
             } else {
                 setLatestImageBatch(null);
                 throw new Error('API response did not contain valid image data or filenames.');
             }
         } catch (err: unknown) {
             durationMs = Date.now() - startTime;
+            if (multi) {
+                await refreshPrivateHistory().catch(() => {});
+                await refreshAccount().catch(() => {});
+            }
             console.error(`API Call Error after ${durationMs}ms:`, err);
             const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred.';
             setError(errorMessage);
@@ -704,6 +767,23 @@ export default function HomePage() {
     );
 
     const handleClearHistory = React.useCallback(async () => {
+        if (multi) {
+            if (!confirm('Permanently delete all your saved images and history? Spending will remain recorded.'))
+                return;
+            try {
+                const response = await fetch('/api/multi-user/history/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clear: true })
+                });
+                if (!response.ok) throw new Error((await response.json()).error);
+                setLatestImageBatch(null);
+                await refreshPrivateHistory();
+            } catch (error) {
+                setError((error as Error).message);
+            }
+            return;
+        }
         const confirmationMessage =
             effectiveStorageModeClient === 'indexeddb'
                 ? 'Are you sure you want to clear the entire image history? In IndexedDB mode, this will also permanently delete all stored images. This cannot be undone.'
@@ -728,7 +808,7 @@ export default function HomePage() {
                 setError(`Failed to clear history: ${e instanceof Error ? e.message : String(e)}`);
             }
         }
-    }, []);
+    }, [multi, fetch, refreshPrivateHistory, effectiveStorageModeClient]);
 
     const handleSendToEdit = async (filename: string) => {
         if (isSendingToEdit) return;
@@ -801,7 +881,15 @@ export default function HomePage() {
             const filenamesToDelete = imagesInEntry.map((img) => img.filename);
 
             try {
-                if (storageModeUsed === 'indexeddb') {
+                if (multi) {
+                    const response = await fetch('/api/multi-user/history/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: [item.id] })
+                    });
+                    if (!response.ok) throw new Error((await response.json()).error);
+                    await refreshPrivateHistory();
+                } else if (storageModeUsed === 'indexeddb') {
                     await db.images.where('filename').anyOf(filenamesToDelete).delete();
                     filenamesToDelete.forEach((fn) => {
                         const url = blobUrlCacheRef.current.get(fn);
@@ -828,7 +916,9 @@ export default function HomePage() {
                     }
                 }
 
-                setHistory((prevHistory) => prevHistory.filter((h) => h.timestamp !== timestamp));
+                setHistory((prevHistory) =>
+                    prevHistory.filter((h) => (multi ? h.id !== item.id : h.timestamp !== timestamp))
+                );
                 setLatestImageBatch((prev) =>
                     prev && prev.some((img) => filenamesToDelete.includes(img.filename)) ? null : prev
                 );
@@ -839,7 +929,7 @@ export default function HomePage() {
                 setItemToDeleteConfirm(null);
             }
         },
-        [isPasswordRequiredByBackend, clientPasswordHash]
+        [isPasswordRequiredByBackend, clientPasswordHash, multi, fetch, refreshPrivateHistory]
     );
 
     const handleRequestDeleteItem = React.useCallback(
@@ -1020,6 +1110,7 @@ export default function HomePage() {
                 <div className='min-h-[450px]'>
                     <HistoryPanel
                         history={history}
+                        totalSummary={multi ? historySummary : undefined}
                         onSelectImage={handleHistorySelect}
                         onClearHistory={handleClearHistory}
                         getImageSrc={getImageSrc}
@@ -1030,6 +1121,15 @@ export default function HomePage() {
                         deletePreferenceDialogValue={dialogCheckboxStateSkipConfirm}
                         onDeletePreferenceDialogChange={setDialogCheckboxStateSkipConfirm}
                     />
+                    {multi && historyCursor && (
+                        <button
+                            className='mt-4 rounded border px-4 py-2'
+                            onClick={() =>
+                                refreshPrivateHistory(historyCursor).catch((error) => setError(error.message))
+                            }>
+                            Load more history
+                        </button>
+                    )}
                 </div>
             </div>
         </main>

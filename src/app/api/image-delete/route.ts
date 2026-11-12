@@ -1,3 +1,6 @@
+import { isMultiUser } from '@/modules/multi-user/config';
+import { deleteImages } from '@/modules/multi-user/history';
+import { body, errorResponse, json, requireUser } from '@/modules/multi-user/http';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,6 +24,23 @@ type FileDeletionResult = {
 };
 
 export async function POST(request: NextRequest) {
+    if (isMultiUser()) {
+        try {
+            const user = requireUser(request);
+            const data = await body(request);
+            if (
+                !Array.isArray(data.filenames) ||
+                data.filenames.length > 100 ||
+                data.filenames.some((value) => typeof value !== 'string')
+            ) {
+                return json({ error: 'Invalid filenames.' }, 400);
+            }
+            deleteImages(user.id, data.filenames);
+            return json({ results: data.filenames.map((filename) => ({ filename, success: true })) });
+        } catch (error) {
+            return errorResponse(error);
+        }
+    }
     console.log('Received POST request to /api/image-delete');
 
     let requestBody: DeleteRequestBody;

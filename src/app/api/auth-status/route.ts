@@ -1,6 +1,10 @@
+import { isMultiUser, privateHeaders } from '@/modules/multi-user/config';
 import { NextResponse } from 'next/server';
 
 export async function GET() {
-    const appPasswordSet = !!process.env.APP_PASSWORD;
-    return NextResponse.json({ passwordRequired: appPasswordSet });
+    const multiUser = isMultiUser();
+    return NextResponse.json(
+        { mode: multiUser ? 'multi-user' : 'single-user', passwordRequired: !multiUser && !!process.env.APP_PASSWORD },
+        { headers: privateHeaders }
+    );
 }

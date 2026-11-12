@@ -1,3 +1,6 @@
+import { isMultiUser, privateHeaders } from '@/modules/multi-user/config';
+import { readImage } from '@/modules/multi-user/history';
+import { requireUser, errorResponse } from '@/modules/multi-user/http';
 import fs from 'fs/promises';
 import { lookup } from 'mime-types';
 import { NextRequest, NextResponse } from 'next/server';
@@ -8,6 +11,22 @@ const imageBaseDir = path.resolve(process.cwd(), 'generated-images');
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ filename: string }> }) {
     const { filename } = await params;
+
+    if (isMultiUser()) {
+        try {
+            const user = requireUser(request);
+            const image = readImage(user.id, filename);
+            return new NextResponse(image.buffer, {
+                headers: {
+                    ...privateHeaders,
+                    'Content-Type': lookup(filename) || 'application/octet-stream',
+                    'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                }
+            });
+        } catch (error) {
+            return errorResponse(error);
+        }
+    }
 
     if (!filename) {
         return NextResponse.json({ error: 'Filename is required' }, { status: 400 });

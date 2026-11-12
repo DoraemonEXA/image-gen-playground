@@ -10,6 +10,8 @@ import {
     type ImageQuality,
     type SvgReasoningEffort
 } from '@/lib/models';
+import { isMultiUser, privateHeaders } from '@/modules/multi-user/config';
+import { generationAccess } from '@/modules/multi-user/generation';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import { NextRequest, NextResponse } from 'next/server';
@@ -34,11 +36,6 @@ type StreamingEvent = {
     }>;
     error?: string;
 };
-
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_API_BASE_URL
-});
 
 const outputDir = path.resolve(process.cwd(), 'generated-images');
 
@@ -131,12 +128,20 @@ export async function POST(request: NextRequest) {
         console.error('OPENAI_API_KEY is not set.');
         return NextResponse.json({ error: 'Server configuration error: API key not found.' }, { status: 500 });
     }
+    let access: ReturnType<typeof generationAccess> = null;
+    let streamingHandedOff = false;
     try {
+        access = generationAccess(request);
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY,
+            baseURL: process.env.OPENAI_API_BASE_URL,
+            maxRetries: access ? 0 : 2
+        });
         let effectiveStorageMode: 'fs' | 'indexeddb';
         const explicitMode = process.env.NEXT_PUBLIC_IMAGE_STORAGE_MODE;
         const isOnVercel = process.env.VERCEL === '1';
 
-        if (explicitMode === 'fs') {
+        if (access || explicitMode === 'fs') {
             effectiveStorageMode = 'fs';
         } else if (explicitMode === 'indexeddb') {
             effectiveStorageMode = 'indexeddb';
@@ -149,13 +154,13 @@ export async function POST(request: NextRequest) {
             `Effective Image Storage Mode: ${effectiveStorageMode} (Explicit: ${explicitMode || 'unset'}, Vercel: ${isOnVercel})`
         );
 
-        if (effectiveStorageMode === 'fs') {
+        if (!access && effectiveStorageMode === 'fs') {
             await ensureOutputDirExists();
         }
 
         const formData = await request.formData();
 
-        if (process.env.APP_PASSWORD) {
+        if (!access && process.env.APP_PASSWORD) {
             const clientPasswordHash = formData.get('passwordHash') as string | null;
             if (!clientPasswordHash) {
                 console.error('Missing password hash.');
@@ -172,7 +177,8 @@ export async function POST(request: NextRequest) {
         const prompt = formData.get('prompt') as string | null;
         const model = formData.get('model') || DEFAULT_GPT_IMAGE_MODEL;
 
-        console.log(`Mode: ${mode}, Model: ${model}, Prompt: ${prompt ? prompt.substring(0, 50) + '...' : 'N/A'}`);
+        if (!access)
+            console.log(`Mode: ${mode}, Model: ${model}, Prompt: ${prompt ? prompt.substring(0, 50) + '...' : 'N/A'}`);
 
         if (!mode || !prompt) {
             return NextResponse.json({ error: 'Missing required parameters: mode and prompt' }, { status: 400 });
@@ -212,7 +218,8 @@ export async function POST(request: NextRequest) {
                     partial_images: partialImages
                 };
 
-                const stream = await openai.images.generate(streamParams);
+                access?.start({ ...baseParams, mode: 'generate', stream: true });
+                const stream = await openai.images.generate(streamParams, { signal: request.signal });
 
                 // Create SSE response
                 const encoder = new TextEncoder();
@@ -241,10 +248,13 @@ export async function POST(request: NextRequest) {
                                     controller.enqueue(encoder.encode(`data: ${JSON.stringify(partialEvent)}\n\n`));
                                 } else if (event.type === 'image_generation.completed') {
                                     const currentIndex = imageIndex;
-                                    const filename = `${timestamp}-${currentIndex}.${output_format}`;
+                                    access?.settle(event.usage);
+                                    const filename = access
+                                        ? access.save(event.b64_json || '', output_format)
+                                        : `${timestamp}-${currentIndex}.${output_format}`;
 
                                     // Save to filesystem if in fs mode
-                                    if (effectiveStorageMode === 'fs' && event.b64_json) {
+                                    if (!access && effectiveStorageMode === 'fs' && event.b64_json) {
                                         const buffer = Buffer.from(event.b64_json, 'base64');
                                         const filepath = path.join(outputDir, filename);
                                         await fs.writeFile(filepath, buffer);
@@ -275,8 +285,10 @@ export async function POST(request: NextRequest) {
                                 }
                             }
 
+                            access?.finish(completedImages.length > 0);
                             // Send final done event with all images and usage
                             const doneEvent: StreamingEvent = {
+                                ...access?.result(),
                                 type: 'done',
                                 images: completedImages,
                                 usage: finalUsage
@@ -284,7 +296,8 @@ export async function POST(request: NextRequest) {
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
                             controller.close();
                         } catch (error) {
-                            console.error('Streaming error:', error);
+                            access?.finish(false);
+                            if (!access) console.error('Streaming error:', error);
                             const errorEvent: StreamingEvent = {
                                 type: 'error',
                                 error:
@@ -292,23 +305,32 @@ export async function POST(request: NextRequest) {
                                         ? error.message + moderationSuffix(error)
                                         : 'Streaming error occurred'
                             };
-                            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
-                            controller.close();
+                            try {
+                                controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+                                controller.close();
+                            } catch {
+                                /* Client disconnected; accounting is already persisted. */
+                            }
+                        } finally {
+                            access?.finish(false);
                         }
                     }
                 });
 
+                streamingHandedOff = true;
                 return new Response(readableStream, {
                     headers: {
                         'Content-Type': 'text/event-stream',
-                        'Cache-Control': 'no-cache',
+                        'Cache-Control': 'private, no-store',
+                        'X-Accel-Buffering': 'no',
                         Connection: 'keep-alive'
                     }
                 });
             }
 
-            console.log('Calling OpenAI generate with params:', baseParams);
-            result = await openai.images.generate(baseParams);
+            if (!access) console.log('Calling OpenAI generate with params:', baseParams);
+            access?.start({ ...baseParams, mode: 'generate' });
+            result = await openai.images.generate(baseParams, { signal: request.signal });
         } else if (mode === 'edit') {
             const imageFiles: File[] = [];
             for (const [key, value] of formData.entries()) {
@@ -343,14 +365,16 @@ export async function POST(request: NextRequest) {
                     partial_images: partialImages
                 };
 
-                console.log('Calling OpenAI edit with streaming, params:', {
-                    ...streamEditParams,
-                    image: `[${imageFiles.map((f) => f.name).join(', ')}]`,
-                    mask: maskFile ? maskFile.name : 'N/A',
-                    markup: markupFile ? markupFile.name : 'N/A'
-                });
+                if (!access)
+                    console.log('Calling OpenAI edit with streaming, params:', {
+                        ...streamEditParams,
+                        image: `[${imageFiles.map((f) => f.name).join(', ')}]`,
+                        mask: maskFile ? maskFile.name : 'N/A',
+                        markup: markupFile ? markupFile.name : 'N/A'
+                    });
 
-                const stream = await openai.images.edit(streamEditParams);
+                access?.start({ ...baseEditParams, mode: 'edit', stream: true });
+                const stream = await openai.images.edit(streamEditParams, { signal: request.signal });
 
                 // Create SSE response for edit
                 const encoder = new TextEncoder();
@@ -379,10 +403,13 @@ export async function POST(request: NextRequest) {
                                     controller.enqueue(encoder.encode(`data: ${JSON.stringify(partialEvent)}\n\n`));
                                 } else if (event.type === 'image_edit.completed') {
                                     const currentIndex = imageIndex;
-                                    const filename = `${timestamp}-${currentIndex}.${output_format}`;
+                                    access?.settle(event.usage);
+                                    const filename = access
+                                        ? access.save(event.b64_json || '', output_format)
+                                        : `${timestamp}-${currentIndex}.${output_format}`;
 
                                     // Save to filesystem if in fs mode
-                                    if (effectiveStorageMode === 'fs' && event.b64_json) {
+                                    if (!access && effectiveStorageMode === 'fs' && event.b64_json) {
                                         const buffer = Buffer.from(event.b64_json, 'base64');
                                         const filepath = path.join(outputDir, filename);
                                         await fs.writeFile(filepath, buffer);
@@ -413,8 +440,10 @@ export async function POST(request: NextRequest) {
                                 }
                             }
 
+                            access?.finish(completedImages.length > 0);
                             // Send final done event with all images and usage
                             const doneEvent: StreamingEvent = {
+                                ...access?.result(),
                                 type: 'done',
                                 images: completedImages,
                                 usage: finalUsage
@@ -422,7 +451,8 @@ export async function POST(request: NextRequest) {
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
                             controller.close();
                         } catch (error) {
-                            console.error('Streaming edit error:', error);
+                            access?.finish(false);
+                            if (!access) console.error('Streaming edit error:', error);
                             const errorEvent: StreamingEvent = {
                                 type: 'error',
                                 error:
@@ -430,36 +460,47 @@ export async function POST(request: NextRequest) {
                                         ? error.message + moderationSuffix(error)
                                         : 'Streaming error occurred'
                             };
-                            controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
-                            controller.close();
+                            try {
+                                controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
+                                controller.close();
+                            } catch {
+                                /* Client disconnected; accounting is already persisted. */
+                            }
+                        } finally {
+                            access?.finish(false);
                         }
                     }
                 });
 
+                streamingHandedOff = true;
                 return new Response(readableStream, {
                     headers: {
                         'Content-Type': 'text/event-stream',
-                        'Cache-Control': 'no-cache',
+                        'Cache-Control': 'private, no-store',
+                        'X-Accel-Buffering': 'no',
                         Connection: 'keep-alive'
                     }
                 });
             }
 
-            console.log('Calling OpenAI edit with params:', {
-                ...baseEditParams,
-                image: `[${imageFiles.map((f) => f.name).join(', ')}]`,
-                mask: maskFile ? maskFile.name : 'N/A',
-                markup: markupFile ? markupFile.name : 'N/A'
-            });
-            result = await openai.images.edit(baseEditParams);
+            if (!access)
+                console.log('Calling OpenAI edit with params:', {
+                    ...baseEditParams,
+                    image: `[${imageFiles.map((f) => f.name).join(', ')}]`,
+                    mask: maskFile ? maskFile.name : 'N/A',
+                    markup: markupFile ? markupFile.name : 'N/A'
+                });
+            access?.start({ ...baseEditParams, mode: 'edit' });
+            result = await openai.images.edit(baseEditParams, { signal: request.signal });
         } else {
             return NextResponse.json({ error: 'Invalid mode specified' }, { status: 400 });
         }
 
+        access?.settle(result.usage, result.svg_usage);
         console.log('OpenAI API call successful.');
 
         if (!result || !Array.isArray(result.data) || result.data.length === 0) {
-            console.error('Invalid or empty data received from OpenAI API:', result);
+            if (!access) console.error('Invalid or empty data received from OpenAI API:', result);
             return NextResponse.json({ error: 'Failed to retrieve image data from API.' }, { status: 500 });
         }
 
@@ -471,9 +512,11 @@ export async function POST(request: NextRequest) {
                 }
                 const buffer = Buffer.from(imageData.b64_json, 'base64');
                 const timestamp = Date.now();
-                const filename = `${timestamp}-${index}.${output_format}`;
+                const filename = access
+                    ? access.save(imageData.b64_json, output_format)
+                    : `${timestamp}-${index}.${output_format}`;
 
-                if (effectiveStorageMode === 'fs') {
+                if (!access && effectiveStorageMode === 'fs') {
                     const filepath = path.join(outputDir, filename);
                     console.log(`Attempting to save image to: ${filepath}`);
                     await fs.writeFile(filepath, buffer);
@@ -497,9 +540,13 @@ export async function POST(request: NextRequest) {
 
         console.log(`All images processed. Mode: ${effectiveStorageMode}`);
 
-        return NextResponse.json({ images: savedImagesData, usage: result.usage, svg_usage: result.svg_usage });
+        access?.finish(true);
+        return NextResponse.json(
+            { images: savedImagesData, usage: result.usage, svg_usage: result.svg_usage, ...access?.result() },
+            { headers: privateHeaders }
+        );
     } catch (error: unknown) {
-        console.error('Error in /api/images:', error);
+        if (!isMultiUser()) console.error('Error in /api/images:', error);
 
         let errorMessage = 'An unexpected error occurred.';
         let status = 500;
@@ -518,6 +565,17 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        return NextResponse.json({ error: errorMessage + moderationSuffix(error) }, { status });
+        if (access && status >= 500)
+            errorMessage = 'Unable to complete generation. Check your history for any saved results.';
+        if (access && error instanceof OpenAI.APIError && (status === 401 || status === 403)) {
+            status = 502;
+            errorMessage = 'Provider authentication failed. Contact an administrator.';
+        }
+        return NextResponse.json(
+            { error: errorMessage + moderationSuffix(error) },
+            { status, headers: privateHeaders }
+        );
+    } finally {
+        if (!streamingHandedOff) access?.finish(false);
     }
 }

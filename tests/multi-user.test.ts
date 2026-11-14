@@ -105,6 +105,7 @@ beforeEach(async () => {
         MAX_ACTIVE_GLOBAL: '4'
     });
     delete process.env.IMAGE_RETENTION_DAYS;
+    delete process.env.AUTO_RECONCILE_INVALID_REQUESTS;
     const token = tokenFrom(issueSetupToken());
     const provision = await prepareSetup(token, 'admin');
     const sessionToken = confirmSetup(token, code(provision.secret), 'setup');
@@ -472,6 +473,55 @@ test('streaming admission follows upstream single-image and output-format constr
     }
     assert.equal(provider.calls(), before);
     assert.equal(balance().balance, 100_000);
+});
+
+test('browser requests validate raw image parameters before admission in generate and edit modes', async () => {
+    funds();
+    const before = provider.calls();
+    for (const mode of ['generate', 'edit']) {
+        const invalid: Array<Record<string, string>> = [
+            { size: '512x512', quality: 'low' },
+            { n: '1.5' },
+            { n: '11' },
+            { quality: 'invalid' },
+            { output_format: 'invalid' },
+            { output_compression: '101' }
+        ];
+        for (const extra of invalid) {
+            const response = await generate(request('/api/images', admin.token, form('square', { mode, ...extra })));
+            assert.equal(response.status, 400);
+            const body = await response.json();
+            assert.equal(body.error_details.code, 'invalid_image_parameter');
+            assert.ok(body.error_details.param);
+        }
+    }
+    const duplicateSize = form('square', { size: '512x512' });
+    duplicateSize.append('size', '1024x1024');
+    assert.equal((await generate(request('/api/images', admin.token, duplicateSize))).status, 400);
+    assert.equal(provider.calls(), before);
+    assert.equal(history(admin.id).items.length, 0);
+    assert.equal((database().prepare('SELECT COUNT(*) n FROM generations').get() as { n: number }).n, 0);
+});
+
+test('initial streaming parameter rejection can reconcile but accepted stream failures cannot', async () => {
+    funds();
+    process.env.AUTO_RECONCILE_INVALID_REQUESTS = 'true';
+    for (const mode of ['generate', 'edit']) {
+        const response = await generate(
+            request('/api/images', admin.token, form('mock-invalid-param', { mode, stream: 'true' }))
+        );
+        assert.equal(response.status, 400);
+        assert.equal((await response.json()).history.accounting, 'reconciled');
+    }
+    const before = balance().balance;
+    const response = await generate(
+        request('/api/images', admin.token, form('mock-partial-failure', { stream: 'true' }))
+    );
+    await response.text();
+    const entry = history(admin.id).items[0];
+    assert.equal(entry.state, 'partial');
+    assert.equal(entry.accounting, 'settled');
+    assert.equal(balance().balance, before - 111);
 });
 
 test('retention validates configuration and is disabled by default, including legacy mode', async () => {

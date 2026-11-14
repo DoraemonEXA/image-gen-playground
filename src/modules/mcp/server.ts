@@ -1,5 +1,7 @@
+import { ImageParameterError } from '../../lib/image-params';
 import { getMimeType, type ImageOutputFormat } from '../../lib/models';
 import { AppError } from '../multi-user/config';
+import { generationFailure } from '../multi-user/generation-errors';
 import { readImage } from '../multi-user/history';
 import { MCP_MAX_BYTES, OAuthError, readLimited, requireMcp, type Scope } from '../oauth/config';
 import { checkHttpOrigin, oauthFailure, oauthHeaders, oauthJson } from '../oauth/http';
@@ -22,6 +24,10 @@ function serverFor(principal: Principal) {
                 authenticateHash(principal.tokenHash);
                 return await operation();
             } catch (error) {
+                if (error instanceof ImageParameterError) {
+                    const details = { error: generationFailure(error) };
+                    return { isError: true, ...textResult(details) };
+                }
                 const message =
                     error instanceof AppError || error instanceof OAuthError || error instanceof z.ZodError
                         ? error.message
@@ -35,7 +41,7 @@ function serverFor(principal: Principal) {
             'generate_image',
             {
                 description:
-                    'Generate images using the shared paid balance. Returns a generation_id immediately. Poll get_generation, then use get_image. Reuse request_id for an exact retry.',
+                    'Generate images using the shared paid balance. Prefer default options or size=1024x1024; 512x512 is invalid for still images. Invalid parameters are rejected before admission. Returns a generation_id immediately after admission. Poll get_generation, then use get_image. Reuse request_id for an exact retry; use a new ID when changing an admitted request.',
                 inputSchema: generateSchema,
                 annotations: writeAnnotations
             },
@@ -63,7 +69,7 @@ function serverFor(principal: Principal) {
             'get_generation',
             {
                 description:
-                    'Get the status and result identifiers of a generation submitted by this client for this user. Poll running jobs every two seconds. Interrupted jobs are not automatically retried.',
+                    'Get the status, accounting, result identifiers and sanitized error (status/code/param/message/request_id when available) of a generation submitted by this client for this user. Poll running jobs every two seconds. Failed/interrupted jobs are not automatically retried. Changing parameters after admission requires a new request_id.',
                 inputSchema: z.object({ generation_id: z.string().min(1).max(100) }).strict(),
                 annotations: { readOnlyHint: true, openWorldHint: false }
             },

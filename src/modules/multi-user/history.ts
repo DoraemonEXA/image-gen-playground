@@ -1,10 +1,16 @@
 import type { HistoryMetadata } from '../../app/page';
 import { AppError, assert, config } from './config';
 import { database } from './database';
+import type { GenerationFailure } from './generation-errors';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export type ServerHistory = HistoryMetadata & { id: string; state: string; accounting: string };
+export type ServerHistory = HistoryMetadata & {
+    id: string;
+    state: string;
+    accounting: string;
+    error?: GenerationFailure;
+};
 export function imagePath(userId: string, generationId: string, filename: string) {
     // Only server-generated IDs from database rows reach this function.
     return path.join(config().dataDir, 'images', userId, generationId, filename);

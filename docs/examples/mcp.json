@@ -1,0 +1,7 @@
+{
+    "mcpServers": {
+        "image-playground": {
+            "url": "https://images.example.com/mcp"
+        }
+    }
+}

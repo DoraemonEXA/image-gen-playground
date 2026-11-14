@@ -23,6 +23,9 @@ export function config() {
         if (!Number.isSafeInteger(value) || value < 1) throw new Error(`Invalid ${name}`);
         return value;
     };
+    const autoReconcile = process.env.AUTO_RECONCILE_INVALID_REQUESTS ?? 'false';
+    if (autoReconcile !== 'true' && autoReconcile !== 'false')
+        throw new Error('AUTO_RECONCILE_INVALID_REQUESTS must be true or false');
     return {
         origin: origin.origin,
         secure: origin.protocol === 'https:',
@@ -30,6 +33,7 @@ export function config() {
         dataDir: path.resolve(/* turbopackIgnore: true */ process.env.APP_DATA_DIR || './data'),
         perUser: positive('MAX_ACTIVE_PER_USER', 1),
         global: positive('MAX_ACTIVE_GLOBAL', 4),
+        autoReconcileInvalidRequests: autoReconcile === 'true',
         trustProxy: process.env.TRUST_PROXY === 'true'
     };
 }

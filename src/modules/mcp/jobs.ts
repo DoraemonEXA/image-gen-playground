@@ -1,8 +1,8 @@
+import { IMAGE_SIZE_DESCRIPTION, IMAGE_SIZE_PATTERN, validateImageParameters } from '../../lib/image-params';
 import {
     DEFAULT_GPT_IMAGE_MODEL,
     DEFAULT_SVG_WRITER_MODEL,
     EDIT_INPUT_FORMATS,
-    getAvailableOutputFormats,
     getMimeType,
     GIF_FRAME_COUNT,
     GIF_FRAME_DURATION_MS,
@@ -40,16 +40,53 @@ const common = {
         .describe('Unique request ID. Reuse it only when retrying this exact operation; retries never run it twice.'),
     prompt: z.string().min(1).max(32_000),
     model: z.enum(GPT_IMAGE_MODELS).default(DEFAULT_GPT_IMAGE_MODEL),
-    n: z.number().int().min(1).max(10).default(1),
-    size: z.string().min(1).max(64).default('auto'),
-    quality: z.enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max']).default('auto'),
+    n: z
+        .number()
+        .int()
+        .min(1)
+        .max(10)
+        .default(1)
+        .describe('Number of images, 1-10. SVG requires 1. GIFs also have a total tiled-sheet pixel budget.'),
+    size: z.string().min(1).max(64).regex(IMAGE_SIZE_PATTERN).default('auto').describe(IMAGE_SIZE_DESCRIPTION),
+    quality: z
+        .enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
+        .default('auto')
+        .describe(
+            'auto, low, medium, high for all models; xhigh and max only for gpt-image-2.5 and gpt-image-2.6. Low quality still requires a valid size.'
+        ),
     background: z.enum(['auto', 'opaque', 'transparent']).default('auto'),
     moderation: z.enum(['auto', 'low']).default('auto'),
-    output_format: z.enum(IMAGE_OUTPUT_FORMATS).default('png'),
-    output_compression: z.number().int().min(0).max(100).optional(),
-    complexity: z.enum(['low', 'medium', 'high']).optional(),
-    frame_count: z.number().int().min(GIF_FRAME_COUNT.min).max(GIF_FRAME_COUNT.max).optional(),
-    frame_duration_ms: z.number().int().min(GIF_FRAME_DURATION_MS.min).max(GIF_FRAME_DURATION_MS.max).optional()
+    output_format: z
+        .enum(IMAGE_OUTPUT_FORMATS)
+        .default('png')
+        .describe(
+            'png, jpeg or webp for all models. gif requires gpt-image-2.6; svg requires gpt-image-2.6 in generate mode and n=1. Transparent backgrounds cannot use jpeg.'
+        ),
+    output_compression: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .describe('JPEG/WebP only: integer 0-100. Omit for other formats.'),
+    complexity: z
+        .enum(['low', 'medium', 'high'])
+        .optional()
+        .describe('Only gpt-image-2.6 models. Omit for older models; provider default is high.'),
+    frame_count: z
+        .number()
+        .int()
+        .min(GIF_FRAME_COUNT.min)
+        .max(GIF_FRAME_COUNT.max)
+        .optional()
+        .describe(`GIF only. Defaults to ${GIF_FRAME_COUNT.default}; frame sizes are validated as a tiled sheet.`),
+    frame_duration_ms: z
+        .number()
+        .int()
+        .min(GIF_FRAME_DURATION_MS.min)
+        .max(GIF_FRAME_DURATION_MS.max)
+        .optional()
+        .describe(`GIF only. Defaults to ${GIF_FRAME_DURATION_MS.default} milliseconds.`)
 };
 export const generateSchema = z
     .object({
@@ -106,11 +143,7 @@ function source(principal: Principal, input: ImageInput) {
 }
 
 function createForm(principal: Principal, mode: 'generate' | 'edit', data: Input) {
-    assert(
-        getAvailableOutputFormats(data.model, mode).includes(data.output_format),
-        400,
-        'Output format is not supported by this model and mode.'
-    );
+    validateImageParameters({ ...data, mode });
     const form = new FormData();
     form.set('mode', mode);
     for (const [key, value] of Object.entries(data)) {
@@ -124,12 +157,6 @@ function createForm(principal: Principal, mode: 'generate' | 'edit', data: Input
     if (data.output_format === 'svg') {
         const params = data as z.infer<typeof generateSchema>;
         const model = params.svg_model ?? DEFAULT_SVG_WRITER_MODEL;
-        assert(
-            !params.svg_reasoning_effort ||
-                (SVG_WRITER_MODELS[model] as readonly string[]).includes(params.svg_reasoning_effort),
-            400,
-            'Unsupported SVG reasoning effort.'
-        );
         form.set('svg_model', model);
     }
     let total = Buffer.byteLength(data.prompt);
@@ -223,7 +250,7 @@ async function launchJob(
             } else await response.body?.cancel();
         })
         .catch((error) => {
-            access.finish(false);
+            access.finish(false, error);
             reject(error);
         })
         .finally(() => running.delete(job));
@@ -249,6 +276,7 @@ export function jobResult(principal: Principal, generationId: string) {
         accounting: entry.accounting,
         images: entry.images.map((image) => ({ image_id: image.filename })),
         cost: entry.costDetails,
+        ...(entry.error ? { error: entry.error } : {}),
         ...(entry.state === 'running' ? { poll_after_ms: 2000 } : {})
     };
 }

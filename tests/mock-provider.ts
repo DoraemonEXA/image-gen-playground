@@ -19,6 +19,28 @@ export async function mockProvider() {
         const stream = json ? json.stream : /name="stream"\r\n\r\ntrue/.test(text);
         const format = json?.output_format || 'png';
         if (text.includes('mock-delay')) await new Promise((resolve) => setTimeout(resolve, 200));
+        if (text.includes('mock-invalid-param') || text.includes('mock-server-failure')) {
+            response.writeHead(text.includes('mock-server-failure') ? 500 : 400, {
+                'Content-Type': 'application/json',
+                'x-request-id': 'req_parameter_test'
+            });
+            response.end(
+                JSON.stringify({
+                    error: {
+                        message: 'Invalid size; secret sk-test-do-not-expose and private prompt must not be stored',
+                        type: 'invalid_request_error',
+                        code: 'invalid_value',
+                        param: 'size',
+                        ...(text.includes('with-usage') ? { usage } : {})
+                    }
+                })
+            );
+            return;
+        }
+        if (text.includes('mock-disconnect')) {
+            request.socket.destroy();
+            return;
+        }
         if (text.includes('mock-error')) {
             response.writeHead(400, { 'Content-Type': 'application/json' });
             response.end(

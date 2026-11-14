@@ -1,4 +1,4 @@
-import { calculateApiCost, type ApiUsage } from '../../lib/cost-utils';
+import { type ApiUsage, calculateApiCost } from '../../lib/cost-utils';
 import type { GptImageModel, SvgWriterModel } from '../../lib/models';
 import { assert } from './config';
 import { database } from './database';
@@ -116,6 +116,31 @@ export function reconcile(actor: string, id: string, amount: unknown, reason: un
             );
             entry(-units, 'reconciliation', actor, row.user_id, id, text);
             database().prepare("UPDATE generations SET accounting='reconciled',cost_units=? WHERE id=?").run(units, id);
+        })
+        .immediate();
+}
+
+/** Called only for an initial provider parameter rejection under the configured no-charge policy. */
+export function reconcileRejectedRequest(id: string) {
+    database()
+        .transaction(() => {
+            const row = database()
+                .prepare(
+                    `SELECT user_id FROM generations g WHERE id=? AND active=0
+            AND state='failed' AND accounting='needs_reconciliation' AND usage IS NULL
+            AND NOT EXISTS(SELECT 1 FROM images i WHERE i.generation_id=g.id)`
+                )
+                .get(id) as { user_id: string } | undefined;
+            if (!row) return;
+            entry(
+                0,
+                'reconciliation',
+                null,
+                row.user_id,
+                id,
+                'Automatic zero charge: initial parameter rejection under AUTO_RECONCILE_INVALID_REQUESTS policy'
+            );
+            database().prepare("UPDATE generations SET accounting='reconciled',cost_units=0 WHERE id=?").run(id);
         })
         .immediate();
 }

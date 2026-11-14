@@ -167,6 +167,7 @@ beforeEach(async () => {
         MAX_ACTIVE_GLOBAL: '4',
         TRUST_PROXY: 'false'
     });
+    delete process.env.AUTO_RECONCILE_INVALID_REQUESTS;
     const setup = new URLSearchParams(new URL(issueSetupToken()).hash.slice(1)).get('token')!;
     const { secret } = await prepareSetup(setup, 'owner');
     const token = confirmSetup(setup, generateSync({ secret }), 'setup');
@@ -568,6 +569,20 @@ test('official MCP client generates, edits, polls and retrieves images using cur
                 'get_generation',
                 'get_image'
             ]);
+            const schema = tools.tools.find((tool) => tool.name === 'generate_image')!.inputSchema;
+            assert.match(JSON.stringify(schema.properties?.size), /655360/);
+            assert.match(JSON.stringify(schema.properties?.size), /pattern/);
+            const invalid = await client.callTool({
+                name: 'generate_image',
+                arguments: {
+                    request_id: `sdk-invalid-${version}`,
+                    prompt: 'square',
+                    size: '512x512',
+                    quality: 'low'
+                }
+            });
+            assert.equal(invalid.isError, true);
+            assert.equal((invalid.structuredContent as { error: { param: string } }).error.param, 'size');
             const result = await client.callTool({
                 name: 'generate_image',
                 arguments: { request_id: `sdk-${version}`, prompt: 'A square' }
@@ -697,4 +712,109 @@ test('SVG charges include writer usage, missing usage needs reconciliation, and 
     const before = provider.calls();
     assert.equal(await startJob(principal, 'generate', { request_id: 'unknown', prompt: 'mock-no-usage' }), unknown);
     assert.equal(provider.calls(), before);
+});
+
+test('invalid image parameters are rejected before MCP admission or provider work', async () => {
+    const { principal } = await grant();
+    const before = provider.calls();
+    const invalid = [
+        { size: '512x512', quality: 'low' },
+        { size: 'nonsense' },
+        { size: '1025x1024' },
+        { size: '4096x1024' },
+        { size: '3840x3840' },
+        { size: '2048x512' },
+        { model: 'gpt-image-2', quality: 'max' },
+        { model: 'gpt-image-2.5-flare', complexity: 'low' },
+        { output_format: 'svg', n: 2 },
+        { output_format: 'png', output_compression: 50 },
+        { output_format: 'jpeg', background: 'transparent' },
+        { frame_count: 9 },
+        { output_format: 'gif', size: '1024x1024', frame_count: 16 },
+        { output_format: 'gif', size: '512x512', frame_count: 9, n: 10 }
+    ];
+    for (const [i, extra] of invalid.entries()) {
+        await assert.rejects(
+            startJob(principal, 'generate', { request_id: `invalid-${i}`, prompt: 'square', ...extra })
+        );
+    }
+    assert.equal(provider.calls(), before);
+    assert.equal((database().prepare('SELECT COUNT(*) n FROM generations').get() as { n: number }).n, 0);
+    assert.equal((database().prepare('SELECT COUNT(*) n FROM mcp_requests').get() as { n: number }).n, 0);
+    const corrected = await startJob(principal, 'generate', {
+        request_id: 'invalid-0',
+        prompt: 'square',
+        size: '1024x1024',
+        quality: 'low'
+    });
+    await drainJobs();
+    assert.equal(jobResult(principal, corrected).state, 'complete');
+    // Low quality and GIF frame sizing remain supported.
+    for (const extra of [
+        { size: '1024x1024', quality: 'low' },
+        { size: '512x512', output_format: 'gif', frame_count: 9 }
+    ]) {
+        const id = await startJob(principal, 'generate', {
+            request_id: `valid-${extra.output_format ?? 'png'}`,
+            prompt: 'square',
+            ...extra
+        });
+        await drainJobs();
+        assert.equal(jobResult(principal, id).state, 'complete');
+    }
+});
+
+test('provider parameter errors survive polling and restart without exposing provider text', async () => {
+    const { principal } = await grant();
+    const id = await startJob(principal, 'generate', { request_id: 'parameter-error', prompt: 'mock-invalid-param' });
+    await drainJobs();
+    closeDatabases();
+    const result = jobResult(principal, id);
+    assert.equal(result.state, 'failed');
+    assert.equal(result.accounting, 'needs_reconciliation');
+    assert.deepEqual((result as unknown as { error: object }).error, {
+        status: 400,
+        code: 'invalid_value',
+        param: 'size',
+        request_id: 'req_parameter_test',
+        message: 'Provider rejected size: invalid value. Check the tool parameter constraints.'
+    });
+    assert.doesNotMatch(JSON.stringify(result), /sk-test|private prompt/);
+    const stored = database().prepare('SELECT metadata FROM generations WHERE id=?').get(id) as { metadata: string };
+    assert.doesNotMatch(stored.metadata, /sk-test|private prompt/);
+    process.env.AUTO_RECONCILE_INVALID_REQUESTS = 'true';
+    assert.equal(
+        await startJob(principal, 'generate', { request_id: 'parameter-error', prompt: 'mock-invalid-param' }),
+        id
+    );
+    assert.equal(jobResult(principal, id).accounting, 'needs_reconciliation');
+});
+
+test('opt-in automatic reconciliation only settles explicit initial parameter rejections once', async () => {
+    process.env.AUTO_RECONCILE_INVALID_REQUESTS = 'true';
+    const { principal } = await grant();
+    const initial = balance().balance;
+    const before = provider.calls();
+    const args = { request_id: 'auto-reconcile', prompt: 'mock-invalid-param' };
+    const id = await startJob(principal, 'generate', args);
+    await drainJobs();
+    assert.equal(jobResult(principal, id).accounting, 'reconciled');
+    assert.equal(balance().balance, initial);
+    closeDatabases();
+    assert.equal(await startJob(principal, 'generate', args), id);
+    assert.equal(provider.calls(), before + 1);
+    const ledger = database().prepare('SELECT amount,kind,actor_id FROM ledger WHERE generation_id=?').all(id);
+    assert.deepEqual(ledger, [{ amount: 0, kind: 'reconciliation', actor_id: null }]);
+    for (const prompt of [
+        'mock-error',
+        'mock-server-failure',
+        'mock-disconnect',
+        'mock-no-usage',
+        'mock-invalid-param-with-usage'
+    ]) {
+        const unknown = await startJob(principal, 'generate', { request_id: prompt, prompt });
+        await drainJobs();
+        assert.equal(jobResult(principal, unknown).accounting, 'needs_reconciliation', prompt);
+    }
+    assert.equal(balance().balance, initial);
 });

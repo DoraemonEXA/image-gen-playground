@@ -1,11 +1,15 @@
-import { DEFAULT_GPT_IMAGE_MODEL, IMAGE_OUTPUT_FORMATS, type ImageBackground, type ImageComplexity, type ImageMode, type ImageModeration, type ImageOutputFormat, type ImageQuality, isGptImageModel, type SvgReasoningEffort } from '@/lib/models';
+import { ImageParameterError, validateImageParameters } from '@/lib/image-params';
+import { DEFAULT_GPT_IMAGE_MODEL, DEFAULT_SVG_WRITER_MODEL, GIF_FRAME_COUNT, GIF_FRAME_DURATION_MS, IMAGE_OUTPUT_FORMATS, type ImageBackground, type ImageComplexity, type ImageMode, type ImageModeration, type ImageOutputFormat, type ImageQuality, isGptImageModel, type SvgReasoningEffort } from '@/lib/models';
 import { isMultiUser, privateHeaders } from '@/modules/multi-user/config';
 import type { generationAccess } from '@/modules/multi-user/generation';
+import { generationFailure, type GenerationFailure } from '@/modules/multi-user/generation-errors';
 import crypto from 'crypto';
 import fs from 'fs/promises';
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import path from 'path';
+
+
 
 
 
@@ -34,6 +38,7 @@ type StreamingEvent = {
         output_format: string;
     }>;
     error?: string;
+    error_details?: GenerationFailure;
 };
 
 const outputDir = path.resolve(process.cwd(), 'generated-images');
@@ -53,7 +58,7 @@ function validateOutputFormat(format: unknown): ImageOutputFormat {
 }
 
 // Request fields shared by the generations and edits endpoints, read once from the multipart body.
-// Value validation beyond shape is left to OpenAI, whose 400 messages are surfaced to the client.
+// Values have already passed validateImageParameters before this normalization step.
 function readImageParams(formData: FormData) {
     const n = parseInt((formData.get('n') as string) || '1', 10);
     const output_format = validateOutputFormat(formData.get('output_format'));
@@ -72,8 +77,8 @@ function readImageParams(formData: FormData) {
             : {}),
         ...(output_format === 'gif'
             ? {
-                  frame_count: parseInt(formData.get('frame_count') as string, 10),
-                  frame_duration_ms: parseInt(formData.get('frame_duration_ms') as string, 10)
+                  frame_count: Number(formData.get('frame_count') ?? GIF_FRAME_COUNT.default),
+                  frame_duration_ms: Number(formData.get('frame_duration_ms') ?? GIF_FRAME_DURATION_MS.default)
               }
             : {})
     };
@@ -129,6 +134,7 @@ export async function executeImages(request: Request, createAccess: () => Return
     }
     let access: ReturnType<typeof generationAccess> = null;
     let streamingHandedOff = false;
+    let providerAccepted = false;
     try {
         access = createAccess();
         const openai = new OpenAI({
@@ -186,6 +192,9 @@ export async function executeImages(request: Request, createAccess: () => Return
             return NextResponse.json({ error: `Unsupported model: ${String(model)}` }, { status: 400 });
         }
 
+        // FormData.get reads the first value. Validate that same value even if a caller duplicates a field.
+        const rawParams = Object.fromEntries([...new Set(formData.keys())].map((key) => [key, formData.get(key)]));
+        validateImageParameters({ ...rawParams, mode, model });
         const { output_format, ...sharedParams } = readImageParams(formData);
 
         // Check for streaming mode
@@ -203,7 +212,7 @@ export async function executeImages(request: Request, createAccess: () => Return
                 output_format,
                 ...(output_format === 'svg' && {
                     svg: {
-                        model: formData.get('svg_model') as string,
+                        model: (formData.get('svg_model') as string) || DEFAULT_SVG_WRITER_MODEL,
                         ...(svgEffort && { reasoning: { effort: svgEffort } })
                     }
                 })
@@ -219,6 +228,7 @@ export async function executeImages(request: Request, createAccess: () => Return
 
                 access?.start({ ...baseParams, mode: 'generate', stream: true });
                 const stream = await openai.images.generate(streamParams, { signal: request.signal });
+                providerAccepted = true;
 
                 // Create SSE response
                 const encoder = new TextEncoder();
@@ -295,14 +305,16 @@ export async function executeImages(request: Request, createAccess: () => Return
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
                             controller.close();
                         } catch (error) {
-                            access?.finish(false);
+                            access?.finish(false, error);
                             if (!access) console.error('Streaming error:', error);
                             const errorEvent: StreamingEvent = {
                                 type: 'error',
-                                error:
-                                    error instanceof Error
-                                        ? error.message + moderationSuffix(error)
-                                        : 'Streaming error occurred'
+                                ...(access ? { error_details: generationFailure(error) } : {}),
+                                error: access
+                                    ? generationFailure(error).message
+                                    : error instanceof Error
+                                      ? error.message + moderationSuffix(error)
+                                      : 'Streaming error occurred'
                             };
                             try {
                                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
@@ -330,6 +342,7 @@ export async function executeImages(request: Request, createAccess: () => Return
             if (!access) console.log('Calling OpenAI generate with params:', baseParams);
             access?.start({ ...baseParams, mode: 'generate' });
             result = await openai.images.generate(baseParams, { signal: request.signal });
+            providerAccepted = true;
         } else if (mode === 'edit') {
             const imageFiles: File[] = [];
             for (const [key, value] of formData.entries()) {
@@ -374,6 +387,7 @@ export async function executeImages(request: Request, createAccess: () => Return
 
                 access?.start({ ...baseEditParams, mode: 'edit', stream: true });
                 const stream = await openai.images.edit(streamEditParams, { signal: request.signal });
+                providerAccepted = true;
 
                 // Create SSE response for edit
                 const encoder = new TextEncoder();
@@ -450,14 +464,16 @@ export async function executeImages(request: Request, createAccess: () => Return
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneEvent)}\n\n`));
                             controller.close();
                         } catch (error) {
-                            access?.finish(false);
+                            access?.finish(false, error);
                             if (!access) console.error('Streaming edit error:', error);
                             const errorEvent: StreamingEvent = {
                                 type: 'error',
-                                error:
-                                    error instanceof Error
-                                        ? error.message + moderationSuffix(error)
-                                        : 'Streaming error occurred'
+                                ...(access ? { error_details: generationFailure(error) } : {}),
+                                error: access
+                                    ? generationFailure(error).message
+                                    : error instanceof Error
+                                      ? error.message + moderationSuffix(error)
+                                      : 'Streaming error occurred'
                             };
                             try {
                                 controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
@@ -491,6 +507,7 @@ export async function executeImages(request: Request, createAccess: () => Return
                 });
             access?.start({ ...baseEditParams, mode: 'edit' });
             result = await openai.images.edit(baseEditParams, { signal: request.signal });
+            providerAccepted = true;
         } else {
             return NextResponse.json({ error: 'Invalid mode specified' }, { status: 400 });
         }
@@ -500,7 +517,7 @@ export async function executeImages(request: Request, createAccess: () => Return
 
         if (!result || !Array.isArray(result.data) || result.data.length === 0) {
             if (!access) console.error('Invalid or empty data received from OpenAI API:', result);
-            return NextResponse.json({ error: 'Failed to retrieve image data from API.' }, { status: 500 });
+            throw new Error('Failed to retrieve image data from API.');
         }
 
         const savedImagesData = await Promise.all(
@@ -545,6 +562,15 @@ export async function executeImages(request: Request, createAccess: () => Return
             { headers: privateHeaders }
         );
     } catch (error: unknown) {
+        access?.finish(false, error, providerAccepted);
+        if (access || error instanceof ImageParameterError) {
+            const details = generationFailure(error);
+            const status = details.status === 401 || details.status === 403 ? 502 : details.status;
+            return NextResponse.json(
+                { error: details.message, error_details: details, ...access?.result() },
+                { status, headers: privateHeaders }
+            );
+        }
         if (!isMultiUser()) console.error('Error in /api/images:', error);
 
         let errorMessage = 'An unexpected error occurred.';
@@ -564,12 +590,6 @@ export async function executeImages(request: Request, createAccess: () => Return
             }
         }
 
-        if (access && status >= 500)
-            errorMessage = 'Unable to complete generation. Check your history for any saved results.';
-        if (access && error instanceof OpenAI.APIError && (status === 401 || status === 403)) {
-            status = 502;
-            errorMessage = 'Provider authentication failed. Contact an administrator.';
-        }
         return NextResponse.json(
             { error: errorMessage + moderationSuffix(error) },
             { status, headers: privateHeaders }

@@ -9,6 +9,8 @@ The optional remote MCP service lets coding agents generate and edit images usin
 3. Follow the client's browser authorization link. Sign in with the existing username and OTP if needed, check the client ID and callback address, and approve access.
 4. Ask the agent to generate or edit an image. Results also appear in the authorizing user's browser history.
 
+For Cursor, copy [the sample mcp.json](examples/mcp.json) to `.cursor/mcp.json` in your client project, or merge its `image-playground` entry into an existing configuration. Replace `https://images.example.com` with the server's `APP_ORIGIN`. The client discovers OAuth and the available scopes automatically; sign in with your username and OTP in the browser when prompted. No OTP, API key, client secret, or Authorization header belongs in this sample. Other clients may use a different configuration schema; see the [Cursor MCP configuration documentation](https://cursor.com/docs/mcp) for this format.
+
 The server uses the official TypeScript MCP SDK, supports the 2026-07-28 protocol and the SDK's stateless compatibility mode for 2025 clients, and supports both HTTPS client metadata documents and dynamic client registration. Public clients must use Authorization Code with PKCE S256. Callbacks must use HTTPS or HTTP on `localhost`, `127.0.0.1`, or `[::1]`; native HTTP loopback callbacks may vary their port. Custom URI schemes and the old separate HTTP+SSE transport are not supported. A particular agent application's compatibility still requires testing with that application.
 
 Client metadata documents are fetched over public HTTPS on port 443, with pinned DNS resolution, no redirects, a five-second timeout and a 64 KiB limit. Names are self-reported by clients; inspect the identifiers on the consent screen. Registration and authorization endpoints are rate limited. Keep the existing trusted proxy/IP configuration correct. CLI requests can omit `Origin`; a supplied origin must match `APP_ORIGIN`.
@@ -25,6 +27,23 @@ Client metadata documents are fetched over public HTTPS on port 443, with pinned
 Request all three scopes for the complete generation/edit/result flow. `images:read` can read an owned image by ID, including an existing browser image explicitly supplied to an agent, but there is no history listing or administration tool.
 
 Generation/edit inputs use the existing model catalog, default model, image options and provider request construction. Tool schemas describe the supported fields. Both write tools require a unique `request_id`. Persist and reuse it when retrying the **same** operation. Reusing it with different inputs fails. Idempotency is scoped to user + client, survives process restarts and content deletion, and applies to failed/interrupted operations too. Intentionally submitting again requires a new ID and can incur another charge.
+
+### Parameter validation and correcting failures
+
+Prefer omitted options (the defaults), or `quality: "low", size: "1024x1024", output_format: "png", n: 1` for an explicit draft. `low` is supported; `512x512` is too small for a still image. Tools advertise field ranges and conditional constraints through `tools/list`, and the server checks them before creating a job or contacting the provider.
+
+| Field | Contract |
+| --- | --- |
+| `size` | `auto` or `WIDTHxHEIGHT`. Still-image edges must be multiples of 16 and at most 3840; long/short ratio at most 3; total pixels 655,360–8,294,400. Common sizes: `1024x1024`, `1536x1024`, `1024x1536`. |
+| `quality` | `auto`, `low`, `medium`, `high`; `xhigh`/`max` additionally for GPT Image 2.5/2.6. |
+| `n` | Integer 1–10; SVG requires 1. |
+| `output_format` | PNG/JPEG/WebP for all selectable models. GIF requires 2.6. SVG requires 2.6 and generate mode. JPEG cannot have a transparent background. |
+| `output_compression` | Integer 0–100, JPEG/WebP only; otherwise omit. |
+| `complexity` | `low`, `medium`, `high`, for 2.6 only; otherwise omit. |
+| GIF options | `frame_count`: integer 2–16 (default 9); `frame_duration_ms`: integer 20–2000 (default 200). Omit both for other formats. Frame dimensions are validated against the tiled sheet, not as independent still images; the batch sheet budget is 16,777,216 pixels. |
+| SVG options | `svg_model` must be in the writer catalog; `svg_reasoning_effort` must be supported by that writer. Omit both for other formats. |
+
+Local validation returns a tool error with the offending field and correction guidance. No job or idempotency record is created, so the caller can correct an unadmitted request. For admitted jobs, poll `get_generation`: a failed/partial result includes a sanitized `error` object with `status`, `code`, `param`, `message`, and provider `request_id` when available. Raw provider messages are not returned or stored because they can echo secrets and input content. Existing historical failures without recorded details cannot be reconstructed. A corrected resubmission of an **admitted** request requires a new `request_id`; exact retries return the original job, including failures.
 
 Example generation arguments:
 
@@ -44,6 +63,8 @@ Poll `get_generation` with the returned `generation_id` every two seconds while 
 MCP uses the same shared balance, per-user/global concurrency limits, owner-scoped files, retention and exactly-once ledger settlement as browser requests. There is no queue. Insufficient balance or capacity rejects admission without calling the provider. Provider SDK automatic retries remain disabled.
 
 The HTTP tool call returns after admission; the image operation continues in the existing application process. Disconnecting a client or revoking a grant does not cancel already admitted work. Those operations may finish and be charged. A process restart marks interrupted work for reconciliation and never automatically resubmits it. Polling or retrying with the same request ID does not repeat the provider call. Provider failures or missing usage remain subject to the existing reconciliation workflow.
+
+Administrators can opt into `AUTO_RECONCILE_INVALID_REQUESTS=true` for providers that guarantee initial parameter-validation rejections are uncharged. Only the narrow initial HTTP 400 classification described in [the accounting guide](MULTI_USER.md#balance-and-accounting) is settled automatically at zero. Unknown charges remain `needs_reconciliation`; failed jobs remain failed. This policy neither regenerates images nor clears old records.
 
 Run one long-lived app process against one local persistent SQLite volume. Do not deploy the job runner as an ephemeral serverless function or scale this service across workers sharing SQLite. Set `MCP_ENABLED=false` and restart to stop new OAuth/MCP access without deleting accounts, images or grants. Database migration version 2 is additive; an older application that understands only version 1 will refuse that database. Back up the volume before upgrading if a binary rollback is needed, and preserve `AUTH_ENCRYPTION_KEY`.
 

@@ -1,9 +1,10 @@
 import type { ApiUsage } from '../../lib/cost-utils';
 import { getStreamingBlockedReason, type ImageOutputFormat, MAX_EDIT_IMAGES, SVG_WRITER_MODELS } from '../../lib/models';
 import type { User } from './accounts';
-import { balance, settle } from './billing';
+import { balance, reconcileRejectedRequest, settle } from './billing';
 import { assert, config, isMultiUser } from './config';
 import { database } from './database';
+import { generationFailure, isInitialParameterRejection } from './generation-errors';
 import { historyEntry, imagePath } from './history';
 import { requireUser } from './http';
 import type { NextRequest } from 'next/server';
@@ -11,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { ImagesResponse } from 'openai/resources/images';
+
 
 
 
@@ -126,20 +128,32 @@ export function generationForUser(user: User, revalidate: () => void, onAdmissio
             saved++;
             return filename;
         },
-        finish(success: boolean) {
+        finish(success: boolean, error?: unknown, providerAccepted = true) {
             if (!id || finished) return;
             database()
                 .transaction(() => {
                     const row = database().prepare('SELECT metadata FROM generations WHERE id=?').get(id) as {
                         metadata: string;
                     };
-                    const metadata = { ...JSON.parse(row.metadata), durationMs: Date.now() - started };
+                    const metadata = {
+                        ...JSON.parse(row.metadata),
+                        durationMs: Date.now() - started,
+                        ...(!success && error !== undefined ? { error: generationFailure(error) } : {})
+                    };
                     database()
                         .prepare(
                             `UPDATE generations SET active=0,state=?,metadata=?,
                     accounting=CASE WHEN accounting='pending' THEN 'needs_reconciliation' ELSE accounting END WHERE id=?`
                         )
                         .run(success ? 'complete' : saved ? 'partial' : 'failed', JSON.stringify(metadata), id);
+                    if (
+                        !success &&
+                        !saved &&
+                        !providerAccepted &&
+                        isInitialParameterRejection(error) &&
+                        config().autoReconcileInvalidRequests
+                    )
+                        reconcileRejectedRequest(id!);
                 })
                 .immediate();
             finished = true;

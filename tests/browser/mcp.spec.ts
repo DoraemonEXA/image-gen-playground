@@ -1,3 +1,4 @@
+import { png } from '../mock-provider';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { expect, test } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
@@ -5,7 +6,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { generateSync } from 'otplib';
 
-test('OTP login resumes consent, real HTTP MCP connects, and Connected agents revokes access', async ({ page }) => {
+test('OTP consent, MCP generation, anonymous image downloads, and grant revocation work over HTTP', async ({
+    page,
+    browser
+}) => {
     const errors: string[] = [];
     page.on('pageerror', (error) => errors.push(error.message));
     const account = JSON.parse(
@@ -71,6 +75,7 @@ test('OTP login resumes consent, real HTTP MCP connects, and Connected agents re
     expect(tokenResponse.status()).toBe(200);
     const tokens = await tokenResponse.json();
     const client = new Client({ name: 'real-http-test', version: '1' });
+    let downloadUrl = '';
     try {
         await client.connect(
             new StreamableHTTPClientTransport(new URL('http://localhost:3111/mcp'), {
@@ -78,6 +83,63 @@ test('OTP login resumes consent, real HTTP MCP connects, and Connected agents re
             })
         );
         expect((await client.listTools()).tools).toHaveLength(4);
+        const generated = await client.callTool({
+            name: 'generate_image',
+            arguments: { request_id: 'browser-download', prompt: 'A square' }
+        });
+        expect(generated.isError).not.toBe(true);
+        const generationId = (generated.structuredContent as { generation_id: string }).generation_id;
+        let imageId = '';
+        await expect
+            .poll(async () => {
+                const response = await client.callTool({
+                    name: 'get_generation',
+                    arguments: { generation_id: generationId }
+                });
+                const result = response.structuredContent as {
+                    state: string;
+                    images: { image_id: string; download_url: string; download_url_expires_at: string }[];
+                };
+                if (result.state === 'complete') {
+                    imageId = result.images[0].image_id;
+                    downloadUrl = result.images[0].download_url;
+                    expect(Date.parse(result.images[0].download_url_expires_at)).toBeGreaterThan(Date.now());
+                }
+                return result.state;
+            })
+            .toBe('complete');
+        const inline = await client.callTool({ name: 'get_image', arguments: { image_id: imageId } });
+        expect(inline.content[0].type).toBe('image');
+        const linked = inline.structuredContent as { download_url: string };
+        const bytes = await fetch(linked.download_url);
+        expect(bytes.status).toBe(200);
+        expect(Buffer.from(await bytes.arrayBuffer())).toEqual(Buffer.from(png, 'base64'));
+        const head = await fetch(downloadUrl, { method: 'HEAD' });
+        expect(head.status).toBe(200);
+        expect(await head.text()).toBe('');
+        // Next.js controls wire framing and strips route-provided Content-Length.
+        expect(head.headers.get('content-type')).toBe('image/png');
+        expect(head.headers.get('cache-control')).toContain('no-store');
+        expect(head.headers.get('referrer-policy')).toBe('no-referrer');
+        expect((await fetch(`http://localhost:3111/api/image/${imageId}`)).status).toBe(401);
+        const anonymous = await browser.newContext();
+        try {
+            const preview = await anonymous.newPage();
+            await preview.setContent('<img alt="Generated preview">');
+            await preview.getByAltText('Generated preview').evaluate((element, url) => {
+                (element as HTMLImageElement).src = url;
+            }, downloadUrl);
+            await expect
+                .poll(() =>
+                    preview
+                        .getByAltText('Generated preview')
+                        .evaluate((element) => (element as HTMLImageElement).naturalWidth)
+                )
+                .toBeGreaterThan(0);
+            expect(await anonymous.cookies()).toEqual([]);
+        } finally {
+            await anonymous.close();
+        }
     } finally {
         await client.close();
     }
@@ -87,6 +149,9 @@ test('OTP login resumes consent, real HTTP MCP connects, and Connected agents re
     await page.screenshot({ path: '.cache/oauth-connections-zh-dark.png', fullPage: true });
     await page.getByRole('button', { name: '撤销授权', exact: true }).click();
     await expect(page.getByText('暂无已连接的智能体。')).toBeVisible();
+    const downloadRejected = await fetch(downloadUrl);
+    expect(downloadRejected.status).toBe(404);
+    expect(downloadRejected.headers.get('cache-control')).toContain('no-store');
     const rejected = await page.request.post('/mcp', {
         headers: { Authorization: `Bearer ${tokens.access_token}`, Accept: 'application/json, text/event-stream' },
         data: { jsonrpc: '2.0', id: 1, method: 'tools/list' }

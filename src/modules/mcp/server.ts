@@ -6,6 +6,7 @@ import { readImage } from '../multi-user/history';
 import { MCP_MAX_BYTES, OAuthError, readLimited, requireMcp, type Scope } from '../oauth/config';
 import { checkHttpOrigin, oauthFailure, oauthHeaders, oauthJson } from '../oauth/http';
 import { authenticate, authenticateHash, type Principal, requireScope } from '../oauth/store';
+import { imageDownload } from './downloads';
 import { editSchema, generateSchema, jobResult, startJob } from './jobs';
 import { createMcpHandler, McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
@@ -69,7 +70,7 @@ function serverFor(principal: Principal) {
             'get_generation',
             {
                 description:
-                    'Get the status, accounting, result identifiers and sanitized error (status/code/param/message/request_id when available) of a generation submitted by this client for this user. Poll running jobs every two seconds. Failed/interrupted jobs are not automatically retried. Changing parameters after admission requires a new request_id.',
+                    'Get the status, accounting, result identifiers and sanitized error (status/code/param/message/request_id when available) of a generation submitted by this client for this user. Each image includes a signed download_url and download_url_expires_at, usable without cookies or Authorization for up to one hour. Call again to refresh links without regenerating. Poll running jobs every two seconds. Failed/interrupted jobs are not automatically retried. Changing parameters after admission requires a new request_id.',
                 inputSchema: z.object({ generation_id: z.string().min(1).max(100) }).strict(),
                 annotations: { readOnlyHint: true, openWorldHint: false }
             },
@@ -79,7 +80,7 @@ function serverFor(principal: Principal) {
             'get_image',
             {
                 description:
-                    'Read one of your images by image_id. Raster files are returned as MCP image content; SVG is returned as a binary resource.',
+                    'Read one of your images by image_id. Raster files are returned as MCP image content; SVG is returned as a binary resource. Also returns download_url and download_url_expires_at in text and structured content. Anyone with the signed URL can GET or HEAD this image without cookies or Authorization for up to one hour, unless access is revoked. Call again to refresh the link without regenerating.',
                 inputSchema: z.object({ image_id: z.string().min(1).max(100) }).strict(),
                 annotations: { readOnlyHint: true, openWorldHint: false }
             },
@@ -89,9 +90,11 @@ function serverFor(principal: Principal) {
                     const { buffer, format } = readImage(principal.user.id, image_id);
                     const mimeType = getMimeType(format as ImageOutputFormat),
                         data = buffer.toString('base64');
+                    const download = { image_id, ...imageDownload(principal, image_id) };
                     return {
-                        content:
-                            format === 'svg'
+                        structuredContent: download,
+                        content: [
+                            ...(format === 'svg'
                                 ? [
                                       {
                                           type: 'resource' as const,
@@ -102,7 +105,9 @@ function serverFor(principal: Principal) {
                                           }
                                       }
                                   ]
-                                : [{ type: 'image' as const, mimeType, data }]
+                                : [{ type: 'image' as const, mimeType, data }]),
+                            { type: 'text' as const, text: JSON.stringify(download) }
+                        ]
                     };
                 })()
         );

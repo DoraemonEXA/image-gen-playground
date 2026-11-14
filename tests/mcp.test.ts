@@ -1,3 +1,5 @@
+import { GET as downloadGet, HEAD as downloadHead } from '../src/app/api/mcp/images/[image_id]/route';
+import { handleImageDownload, imageDownload, IMAGE_DOWNLOAD_MS } from '../src/modules/mcp/downloads';
 import { drainJobs, jobResult, startJob } from '../src/modules/mcp/jobs';
 import { handleMcp } from '../src/modules/mcp/server';
 import {
@@ -13,7 +15,8 @@ import {
 } from '../src/modules/multi-user/accounts';
 import { adjustBalance, balance } from '../src/modules/multi-user/billing';
 import { closeDatabases, database, recoverInterruptedRequests } from '../src/modules/multi-user/database';
-import { deleteHistory, history } from '../src/modules/multi-user/history';
+import { deleteHistory, deleteImages, history, imagePath } from '../src/modules/multi-user/history';
+import { expireHistoryBatch } from '../src/modules/multi-user/retention';
 import { hash, randomToken } from '../src/modules/multi-user/secrets';
 import {
     matchesRedirect,
@@ -143,6 +146,8 @@ const localFetch: typeof fetch = async (input, init) => {
     if (url.pathname === '/.well-known/oauth-authorization-server') return metadataResponse('authorization');
     if (url.pathname.startsWith('/.well-known/oauth-protected-resource')) return metadataResponse('resource');
     if (url.pathname.startsWith('/oauth/')) return handleOAuth(new NextRequest(request));
+    if (url.pathname.startsWith('/api/mcp/images/'))
+        return downloadGet(request, { params: Promise.resolve({ image_id: url.pathname.split('/').at(-1)! }) });
     return new Response(null, { status: 404 });
 };
 
@@ -591,13 +596,44 @@ test('official MCP client generates, edits, polls and retrieves images using cur
             const id = (result.structuredContent as { generation_id: string }).generation_id;
             await drainJobs();
             const status = await client.callTool({ name: 'get_generation', arguments: { generation_id: id } });
-            const state = status.structuredContent as { state: string; images: { image_id: string }[] };
+            const state = status.structuredContent as {
+                state: string;
+                images: { image_id: string; download_url: string; download_url_expires_at: string }[];
+            };
             assert.equal(state.state, 'complete');
+            assert.ok(Date.parse(state.images[0].download_url_expires_at) > Date.now());
+            assert.deepEqual(
+                Buffer.from(await (await localFetch(state.images[0].download_url)).arrayBuffer()),
+                Buffer.from(png, 'base64')
+            );
             const image = await client.callTool({
                 name: 'get_image',
                 arguments: { image_id: state.images[0].image_id }
             });
             assert.equal(image.content[0].type, 'image');
+            const download = image.structuredContent as { image_id: string; download_url: string };
+            assert.equal(download.image_id, state.images[0].image_id);
+            assert.equal(image.content[1].type, 'text');
+            if (image.content[1].type === 'text') assert.deepEqual(JSON.parse(image.content[1].text), download);
+            assert.equal((await localFetch(download.download_url)).status, 200);
+            const svg = await client.callTool({
+                name: 'generate_image',
+                arguments: { request_id: `svg-${version}`, prompt: 'A vector square', output_format: 'svg' }
+            });
+            await drainJobs();
+            const svgStatus = await client.callTool({
+                name: 'get_generation',
+                arguments: { generation_id: (svg.structuredContent as { generation_id: string }).generation_id }
+            });
+            const svgImage = await client.callTool({
+                name: 'get_image',
+                arguments: { image_id: (svgStatus.structuredContent as typeof state).images[0].image_id }
+            });
+            assert.equal(svgImage.content[0].type, 'resource');
+            const svgResponse = await localFetch((svgImage.structuredContent as typeof download).download_url);
+            assert.equal(svgResponse.headers.get('content-type'), 'image/svg+xml');
+            assert.match(svgResponse.headers.get('content-security-policy')!, /sandbox; default-src 'none'/);
+            assert.match(await svgResponse.text(), /<svg/);
             const edit = await client.callTool({
                 name: 'edit_image',
                 arguments: {
@@ -615,9 +651,210 @@ test('official MCP client generates, edits, polls and retrieves images using cur
     }
     assert.equal(
         (database().prepare('SELECT COUNT(*) n FROM ledger WHERE generation_id IS NOT NULL').get() as { n: number }).n,
-        4
+        6
     );
 });
+
+async function generatedDownload(token = owner.token) {
+    const connection = await grant(token);
+    const generationId = await startJob(connection.principal, 'generate', {
+        request_id: 'download',
+        prompt: 'A square'
+    });
+    await drainJobs();
+    const imageId = jobResult(connection.principal, generationId).images[0].image_id;
+    const now = Date.now();
+    return { ...connection, generationId, imageId, now, ...imageDownload(connection.principal, imageId, now) };
+}
+
+test('signed downloads support unauthenticated repeated GET and HEAD, survive restart/token refresh, and expire at one hour', async () => {
+    const result = await generatedDownload();
+    const { download_url, imageId, principal, now } = result;
+    const params = { params: Promise.resolve({ image_id: imageId }) };
+    const calls = provider.calls();
+    const money = balance();
+    const ledger = database().prepare('SELECT * FROM ledger ORDER BY id').all();
+    assert.equal(Date.parse(result.download_url_expires_at), now + IMAGE_DOWNLOAD_MS);
+    assert.equal(new URL(download_url).origin, origin);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await downloadGet(new Request(download_url), params);
+        assert.equal(response.status, 200);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from(png, 'base64'));
+        assert.equal(response.headers.get('content-type'), 'image/png');
+        assert.equal(response.headers.get('content-length'), String(Buffer.from(png, 'base64').length));
+        assert.match(response.headers.get('cache-control')!, /no-store/);
+        assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+        assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+        assert.equal(response.headers.get('set-cookie'), null);
+        assert.equal(response.headers.get('location'), null);
+    }
+    const head = await downloadHead(new Request(download_url, { method: 'HEAD' }), params);
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), '');
+    assert.equal(head.headers.get('content-length'), String(Buffer.from(png, 'base64').length));
+    closeDatabases();
+    assert.equal(handleImageDownload(new Request(download_url), imageId, now + IMAGE_DOWNLOAD_MS - 1).status, 200);
+    assert.equal(handleImageDownload(new Request(download_url), imageId, now + IMAGE_DOWNLOAD_MS).status, 404);
+    const later = now + ACCESS_MS + 100;
+    assert.throws(() => imageDownload(principal, imageId, later), /expired/);
+    const tokens = refresh(result.tokens, result.client.client_id, later);
+    const renewedPrincipal = authenticate(bearer(tokens.access_token), later);
+    const renewed = imageDownload(renewedPrincipal, imageId, later);
+    assert.equal(Date.parse(renewed.download_url_expires_at), later + IMAGE_DOWNLOAD_MS);
+    assert.equal(handleImageDownload(new Request(download_url), imageId, later).status, 200);
+    assert.equal(handleImageDownload(new Request(renewed.download_url), imageId, now + IMAGE_DOWNLOAD_MS).status, 200);
+    assert.equal(provider.calls(), calls);
+    assert.deepEqual(balance(), money);
+    assert.deepEqual(database().prepare('SELECT * FROM ledger ORDER BY id').all(), ledger);
+    assert.equal((await handleMcp(bearer(new URL(download_url).searchParams.get('token')!))).status, 401);
+});
+
+test('signed downloads reject tampering and malformed tokens with uniform private 404 responses', async () => {
+    const { download_url, imageId } = await generatedDownload();
+    const url = new URL(download_url);
+    const token = url.searchParams.get('token')!;
+    const [payload, signature] = token.split('.');
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    const alteredPayload = Buffer.from(JSON.stringify({ ...data, expires: data.expires + IMAGE_DOWNLOAD_MS })).toString(
+        'base64url'
+    );
+    for (const invalid of [
+        '',
+        'bad',
+        'x'.repeat(1025),
+        `${payload}.short`,
+        `${payload}.${signature.slice(0, -1)}!`,
+        `${alteredPayload}.${signature}`,
+        `${payload}.${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`
+    ]) {
+        url.searchParams.set('token', invalid);
+        const response = handleImageDownload(new Request(url), imageId);
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), { error: 'Image not found.' });
+        assert.match(response.headers.get('cache-control')!, /no-store/);
+        assert.equal(response.headers.get('location'), null);
+    }
+    url.search = '';
+    assert.equal(handleImageDownload(new Request(url), imageId).status, 404);
+    url.searchParams.append('token', token);
+    url.searchParams.append('token', token);
+    assert.equal(handleImageDownload(new Request(url), imageId).status, 404);
+    assert.equal(handleImageDownload(new Request(download_url), 'other.png').status, 404);
+    const head = handleImageDownload(new Request(url, { method: 'HEAD' }), imageId);
+    assert.equal(head.status, 404);
+    assert.equal(await head.text(), '');
+    assert.equal(handleImageDownload(new Request(download_url, { method: 'POST' }), imageId).status, 405);
+});
+
+test('only an authenticated image owner with read scope can mint download links', async () => {
+    const { principal, imageId, download_url } = await generatedDownload();
+    const alice = await user('alice');
+    const other = await grant(alice.token);
+    const writeOnly = await grant(owner.token, ['images:generate']);
+    const readOnly = await grant(owner.token, ['images:read']);
+    assert.throws(() => imageDownload(other.principal, imageId), /not found/);
+    assert.throws(() => imageDownload(writeOnly.principal, imageId), /scope/);
+    assert.throws(() => imageDownload(principal, 'missing.png'), /not found/);
+    assert.equal(
+        handleImageDownload(new Request(imageDownload(readOnly.principal, imageId).download_url), imageId).status,
+        200
+    );
+    // A recipient needs only the capability, regardless of their browser account or Origin.
+    assert.equal(
+        handleImageDownload(
+            new Request(download_url, {
+                headers: { cookie: `playground-local=${alice.token}`, origin: 'https://client.example' }
+            }),
+            imageId
+        ).status,
+        200
+    );
+    revokeAgent(owner.id, principal.grantId);
+    assert.throws(() => imageDownload(principal, imageId), /expired/);
+});
+
+test('download expiry is capped by grant lifetime and checked against live grant expiry', async () => {
+    const { principal, imageId, now } = await generatedDownload();
+    const expires = now + 30_000;
+    database().prepare('UPDATE oauth_grants SET expires=? WHERE id=?').run(expires, principal.grantId);
+    const result = imageDownload(principal, imageId, now);
+    assert.equal(Date.parse(result.download_url_expires_at), expires);
+    assert.equal(handleImageDownload(new Request(result.download_url), imageId, expires - 1).status, 200);
+    assert.equal(handleImageDownload(new Request(result.download_url), imageId, expires).status, 404);
+    database().prepare('UPDATE oauth_grants SET expires=? WHERE id=?').run(now, principal.grantId);
+    assert.equal(handleImageDownload(new Request(result.download_url), imageId, now).status, 404);
+});
+
+for (const reason of [
+    'revoked',
+    'disabled',
+    'reset',
+    'scope',
+    'resource',
+    'image deletion',
+    'history deletion',
+    'retention',
+    'missing file',
+    'MCP disabled',
+    'single-user',
+    'signing key',
+    'origin'
+] as const) {
+    test(`download stops immediately after ${reason}`, async () => {
+        const alice = await user('alice');
+        const { principal, imageId, generationId, download_url } = await generatedDownload(alice.token);
+        const money = balance();
+        switch (reason) {
+            case 'revoked':
+                revokeAgent(alice.id, principal.grantId);
+                break;
+            case 'disabled':
+                setEnabled(alice.id, false);
+                break;
+            case 'reset':
+                await resetAuthenticator(alice.id);
+                break;
+            case 'scope':
+                database()
+                    .prepare('UPDATE oauth_grants SET scope=? WHERE id=?')
+                    .run('images:generate', principal.grantId);
+                break;
+            case 'resource':
+                database()
+                    .prepare('UPDATE oauth_grants SET resource=? WHERE id=?')
+                    .run('https://other.example/mcp', principal.grantId);
+                break;
+            case 'image deletion':
+                deleteImages(alice.id, [imageId]);
+                break;
+            case 'history deletion':
+                deleteHistory(alice.id, [generationId], false);
+                break;
+            case 'retention':
+                assert.equal(expireHistoryBatch(Date.now() + 1), 1);
+                break;
+            case 'missing file':
+                fs.unlinkSync(imagePath(alice.id, generationId, imageId));
+                break;
+            case 'MCP disabled':
+                process.env.MCP_ENABLED = 'false';
+                break;
+            case 'single-user':
+                process.env.APP_MODE = 'single-user';
+                break;
+            case 'signing key':
+                process.env.AUTH_ENCRYPTION_KEY = randomBytes(32).toString('hex');
+                break;
+            case 'origin':
+                process.env.APP_ORIGIN = 'https://other.example';
+                break;
+        }
+        const response = handleImageDownload(new Request(download_url), imageId);
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), { error: 'Image not found.' });
+        assert.deepEqual(balance(), money);
+    });
+}
 
 test('concurrent retries and retry after restart reuse one paid generation; conflicting reuse fails', async () => {
     const { principal } = await grant();

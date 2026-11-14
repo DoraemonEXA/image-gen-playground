@@ -21,8 +21,8 @@ Client metadata documents are fetched over public HTTPS on port 443, with pinned
 | ---------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `generate_image` | `images:generate` | A generation ID; starts a paid operation immediately after admission.                                                                  |
 | `edit_image`     | `images:edit`     | A generation ID; accepts one to sixteen input images and optional mask/markup.                                                         |
-| `get_generation` | `images:read`     | State, result image IDs, accounting state and estimated cost. Only jobs submitted by this client for this user are visible.            |
-| `get_image`      | `images:read`     | An image owned by this user, addressed by its image ID. SVG is returned as an MCP binary resource; raster output is MCP image content. |
+| `get_generation` | `images:read`     | State, result image IDs with signed download URLs, accounting state and estimated cost. Only jobs submitted by this client for this user are visible. |
+| `get_image`      | `images:read`     | An owned image by ID, plus a signed download URL. SVG remains an MCP binary resource; raster output remains MCP image content. |
 
 Request all three scopes for the complete generation/edit/result flow. `images:read` can read an owned image by ID, including an existing browser image explicitly supplied to an agent, but there is no history listing or administration tool.
 
@@ -58,6 +58,24 @@ Example generation arguments:
 
 Poll `get_generation` with the returned `generation_id` every two seconds while its state is `running`. Once complete, pass a returned `image_id` to `get_image`. Edits accept `images: [{"image_id": "..."}]` (also requires read scope) or `images: [{"data": "BASE64_BYTES", "mime_type": "image/png"}]`. PNG, JPEG and WebP are accepted as inputs. Masks and markup use the same representation. Paths on the agent's computer and arbitrary remote URLs are not fetched by the server. The agent/client must read local files and supply their bytes. MCP JSON requests have a 100 MB ceiling including base64 expansion, and resolved image inputs also have a 100 MB aggregate ceiling.
 
+### Downloading images without a browser login
+
+Each image in `get_generation.images` includes `image_id`, `download_url`, and `download_url_expires_at` (UTC ISO 8601). `get_image` returns the same fields in `structuredContent` and an appended JSON text content item, while preserving its original image/binary content as the first item. Clients can display the URL in an image element or download it with an ordinary HTTP request:
+
+```sh
+curl --fail --silent --show-error "<download_url>" --output image.png
+```
+
+On Windows PowerShell use `curl.exe`. Replace `<download_url>` with the complete returned URL and use the image's extension. The URL supports repeated `GET` and `HEAD` requests without cookies or an Authorization header. The existing `/api/image/<image_id>` browser endpoint still requires a browser login.
+
+`HEAD` returns the status and image/security headers without a body. Next.js controls HTTP framing and may strip the route's `Content-Length`; clients must not require that header to download or preview an image.
+
+Links last one hour from issuance, capped by the authorizing OAuth grant's expiry. They remain valid across the client's 15-minute access-token expiry, token refresh, and server restarts with the same origin, key, and data. Call authenticated `get_generation` or `get_image` again to obtain a fresh URL; this does not regenerate the image or incur another provider charge. The response's expiry is an upper bound: revoked or expired grants, disabled accounts, authenticator resets, image/history deletion, retention deletion, or disabling MCP stop subsequent downloads immediately. Invalid and unavailable links return `404`, without a login redirect. Already-downloaded copies cannot be revoked.
+
+Treat the complete URL as a bearer credential: anyone who possesses it can read that one image while it is valid. Do not place it in public logs or analytics. Configure reverse proxies, hosting access logs and error trackers to redact the `token` query parameter on `/api/mcp/images/*` (or omit query strings for that route); the application does not log download tokens. Responses use `no-store`, `nosniff`, `no-referrer`, and a sandbox policy for SVG content. These headers do not prevent recipients from saving copies.
+
+Download signatures use an HKDF-derived HMAC key from the existing `AUTH_ENCRYPTION_KEY` and `APP_ORIGIN`; no additional secret, database migration, or storage service is required. Keep the existing encryption key stable because it also protects account authenticator secrets. Use **Connected agents** to revoke access instead of rotating that key.
+
 ## Accounting and operation lifetime
 
 MCP uses the same shared balance, per-user/global concurrency limits, owner-scoped files, retention and exactly-once ledger settlement as browser requests. There is no queue. Insufficient balance or capacity rejects admission without calling the provider. Provider SDK automatic retries remain disabled.
@@ -81,9 +99,10 @@ Use **Connected agents** in the playground header to revoke a grant immediately.
 - `POST /oauth/token` with URL-encoded `authorization_code` or `refresh_token` parameters, `client_id`, and `resource=<APP_ORIGIN>/mcp`
 - `POST /oauth/revoke` with URL-encoded `client_id` and `token`
 - `/mcp` with `Authorization: Bearer <access_token>`
+- `GET` / `HEAD /api/mcp/images/<image_id>?token=<signed_download_token>` with the complete URL returned by MCP
 
 OAuth grants are scoped to this MCP resource and confer no browser or admin API access. Discovery remains public while enabled; MCP authentication failures return a `WWW-Authenticate` discovery challenge. Logs should not capture Authorization headers, token request bodies, authorization codes, or image prompts. Monitor ordinary HTTP error rates and use the existing administration overview for spending and reconciliation.
 
 ## Verification
 
-`npm test` covers the migration, discovery/registration, PKCE/consent, token rotation/replay/revocation, scopes, ownership, request idempotency, provider errors and settlement. It exercises current and legacy MCP protocol versions through the official client SDK using a mock image provider. `npm run test:browser` includes OTP login through browser consent, a real HTTP MCP SDK connection and grant revocation. These checks do not establish compatibility with every coding-agent application or validate a production deployment.
+`npm test` covers the migration, discovery/registration, PKCE/consent, token rotation/replay/revocation, scopes, ownership, request idempotency, provider errors and settlement. Signed-download checks cover unauthenticated GET/HEAD, tampering, expiry, token refresh, database reopen, deletion/retention, account/grant changes and unchanged billing. It exercises current and legacy MCP protocol versions through the official client SDK using a mock image provider. `npm run test:browser` includes OTP consent, real HTTP MCP generation, an image preview in a browser context without cookies, private browser-route enforcement and download revocation. These checks do not establish compatibility with every coding-agent application or validate a production deployment.

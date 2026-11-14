@@ -20,6 +20,7 @@ import { historyEntry, readImage } from '../multi-user/history';
 import { hash } from '../multi-user/secrets';
 import { MCP_MAX_BYTES, requireMcp, resourceUrl, type Scope } from '../oauth/config';
 import { authenticateHash, type Principal, requireScope } from '../oauth/store';
+import { imageDownload } from './downloads';
 import * as z from 'zod/v4';
 
 const imageInput = z.union([
@@ -274,7 +275,10 @@ export function jobResult(principal: Principal, generationId: string) {
         generation_id: generationId,
         state: entry.state,
         accounting: entry.accounting,
-        images: entry.images.map((image) => ({ image_id: image.filename })),
+        images: entry.images.map((image) => ({
+            image_id: image.filename,
+            ...imageDownload(principal, image.filename)
+        })),
         cost: entry.costDetails,
         ...(entry.error ? { error: entry.error } : {}),
         ...(entry.state === 'running' ? { poll_after_ms: 2000 } : {})

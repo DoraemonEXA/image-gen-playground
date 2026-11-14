@@ -200,6 +200,7 @@ export function setEnabled(id: string, enabled: boolean) {
             assert(user?.role === 'user', 404, 'Regular user not found.');
             database().prepare('UPDATE users SET enabled=? WHERE id=?').run(Number(enabled), id);
             database().prepare('DELETE FROM sessions WHERE user_id=?').run(id);
+            database().prepare('UPDATE oauth_grants SET revoked=1 WHERE user_id=?').run(id);
         })
         .immediate();
 }
@@ -212,6 +213,7 @@ export async function resetAuthenticator(id: string, operator = false) {
             assert(account && (operator || account.role === 'user'), 404, 'Account not found.');
             database().prepare('UPDATE users SET secret=?,last_step=-1 WHERE id=?').run(encrypt(secret), id);
             database().prepare('DELETE FROM sessions WHERE user_id=?').run(id);
+            database().prepare('UPDATE oauth_grants SET revoked=1 WHERE user_id=?').run(id);
             database().prepare('DELETE FROM attempts WHERE bucket=?').run(`login:${account.username}`);
             return account;
         })

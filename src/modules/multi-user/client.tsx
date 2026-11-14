@@ -13,6 +13,7 @@ type AccountState = {
     spending?: number;
     unresolved?: number;
     setupRequired?: boolean;
+    mcpEnabled?: boolean;
 };
 type Runtime = {
     multi: boolean;
@@ -253,6 +254,11 @@ export function AccountRuntime({ children, admin = false }: { children: React.Re
                             <a className='underline' href='/admin'>
                                 {t('Administration')}
                             </a>
+                        )}
+                        {account?.mcpEnabled && (
+                            <Link className='underline' href='/connections'>
+                                {t('Connected agents')}
+                            </Link>
                         )}
                         <button className='ml-auto underline' onClick={logout}>
                             {t('Sign out')}

@@ -1,3 +1,4 @@
+import { mcpEnabled } from '../oauth/config';
 import {
     confirmSetup,
     createUser,
@@ -27,6 +28,7 @@ export async function handleAccountRequest(request: NextRequest) {
             return json({
                 user: user ?? null,
                 setupRequired: !setupClosed(),
+                mcpEnabled: mcpEnabled(),
                 ...(user ? { ...balance(), ...personalUsage(user.id) } : {})
             });
         }

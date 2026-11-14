@@ -1,5 +1,29 @@
 /** Keys retain upstream English copy so changed or new messages fall back safely. */
 export const zhCN: Readonly<Record<string, string>> = {
+    'Connected agents': '已连接的智能体',
+    'Connect an agent': '连接智能体',
+    'Authorize {client} as {user}?': '以 {user} 的身份授权 {client}？',
+    'Client names are provided by the connecting application. Check the client and callback before approving.':
+        '客户端名称由连接的应用提供。批准前请核对客户端和回调地址。',
+    'Client ID': '客户端 ID',
+    Callback: '回调地址',
+    'Generate images using the shared balance': '使用共享余额生成图片',
+    'Edit supplied images using the shared balance': '使用共享余额编辑提供的图片',
+    'Read your images by identifier and retrieve agent results': '通过标识读取你的图片并获取智能体的生成结果',
+    'Access lasts up to 30 days. You can revoke it at any time in Connected agents.':
+        '授权最多持续 30 天。你可以随时在“已连接的智能体”中撤销。',
+    'Generation and editing spend the existing shared balance and use your account limits.':
+        '生成和编辑将扣除现有共享余额，并遵循你的账户限制。',
+    'Approve access': '批准授权',
+    Deny: '拒绝',
+    'Revoke access': '撤销授权',
+    'No connected agents.': '暂无已连接的智能体。',
+    'Expires: {date}': '到期时间：{date}',
+    'Revoking access stops new agent requests. Already admitted image jobs can finish and be charged.':
+        '撤销授权将阻止新的智能体请求。已受理的图片任务仍可完成并计费。',
+    'Invalid authorization request.': '无效的授权请求。',
+    'Authorization request expired. Connect the agent again.': '授权请求已过期，请重新连接智能体。',
+    'Authorization session changed. Connect the agent again.': '授权会话已更改，请重新连接智能体。',
     'Saved.': '已保存。',
     'Estimated API usage': '预估 API 用量',
     'Unable to complete generation. Check your history for any saved results.':

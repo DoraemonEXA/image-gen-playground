@@ -1,5 +1,7 @@
 # Multi-user deployment
 
+Optional remote MCP access for coding agents uses the same OTP accounts and shared balance. See [MCP setup and OAuth authorization](MCP.md). It is disabled by default (`MCP_ENABLED=false`).
+
 The fork defaults to `APP_MODE=multi-user`. Users sign in with an administrator-assigned username and a six-digit authenticator code. There is no registration, email login, or shared-password bypass. History follows the account across browsers. Sessions expire after 30 days.
 
 ## Deploy on one Docker server
@@ -9,18 +11,18 @@ Use a Linux server with Docker Compose, a domain pointing to it, and ports 80/44
 1. Copy `.env.example` to `.env` and set `APP_ORIGIN` to your HTTPS origin and `OPENAI_API_KEY` to the shared server key.
 2. Generate `AUTH_ENCRYPTION_KEY` once:
 
-   ```sh
-   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-   ```
+    ```sh
+    node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+    ```
 
-   Store it in `.env` and keep a separate secure backup. It encrypts authenticator secrets. Replacing it without migrating those secrets prevents login. Do not commit `.env`.
+    Store it in `.env` and keep a separate secure backup. It encrypts authenticator secrets. Replacing it without migrating those secrets prevents login. Do not commit `.env`.
 
 3. Start the application:
 
-   ```sh
-   docker compose up -d --build
-   docker compose exec app npm run admin -- setup-link
-   ```
+    ```sh
+    docker compose up -d --build
+    docker compose exec app npm run admin -- setup-link
+    ```
 
 4. Open the printed setup link in a browser. Choose an admin username, scan the QR in an authenticator app, and enter its code. The account activates only after verification.
 5. In Administration, add the opening shared balance, then create users and distribute their usernames and QR codes privately.

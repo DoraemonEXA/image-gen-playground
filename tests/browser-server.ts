@@ -15,6 +15,7 @@ async function main() {
         env: {
             ...process.env,
             APP_MODE: 'multi-user',
+            MCP_ENABLED: 'true',
             APP_ORIGIN: 'http://localhost:3111',
             APP_DATA_DIR: directory,
             AUTH_ENCRYPTION_KEY: 'b'.repeat(64),

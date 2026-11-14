@@ -5,6 +5,7 @@ services:
     init: true
     environment:
       APP_MODE: ${APP_MODE:-multi-user}
+      MCP_ENABLED: ${MCP_ENABLED:-false}
       APP_ORIGIN: ${APP_ORIGIN:?Set APP_ORIGIN}
       AUTH_ENCRYPTION_KEY: ${AUTH_ENCRYPTION_KEY:?Set AUTH_ENCRYPTION_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}

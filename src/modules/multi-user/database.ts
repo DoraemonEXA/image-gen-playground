@@ -18,7 +18,7 @@ export function database() {
     db.pragma('busy_timeout = 5000');
     db.transaction(() => {
         const version = db!.pragma('user_version', { simple: true }) as number;
-        if (version > 1) throw new Error('Database is newer than this application');
+        if (version > 2) throw new Error('Database is newer than this application');
         if (version === 0) {
             db!.exec(`
                 CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), balance INTEGER NOT NULL DEFAULT 0,
@@ -46,6 +46,41 @@ export function database() {
                     generation_id TEXT UNIQUE REFERENCES generations(id), reason TEXT NOT NULL, balance_after INTEGER NOT NULL);
                 CREATE TABLE garbage (filepath TEXT PRIMARY KEY);
                 PRAGMA user_version = 1;
+            `);
+        }
+        if (version < 2) {
+            db!.exec(`
+                CREATE TABLE oauth_clients (
+                    id TEXT PRIMARY KEY, metadata TEXT NOT NULL, created INTEGER NOT NULL, expires INTEGER
+                );
+                CREATE TABLE oauth_requests (
+                    id TEXT PRIMARY KEY, parameters TEXT NOT NULL, client_name TEXT NOT NULL,
+                    expires INTEGER NOT NULL, session_hash TEXT, csrf_hash TEXT
+                );
+                CREATE TABLE oauth_grants (
+                    id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), client_id TEXT NOT NULL,
+                    client_name TEXT NOT NULL, scope TEXT NOT NULL, resource TEXT NOT NULL,
+                    created INTEGER NOT NULL, expires INTEGER NOT NULL, revoked INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX oauth_grants_user ON oauth_grants(user_id);
+                CREATE TABLE oauth_codes (
+                    hash TEXT PRIMARY KEY, grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+                    redirect_uri TEXT NOT NULL, challenge TEXT NOT NULL, expires INTEGER NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE oauth_tokens (
+                    hash TEXT PRIMARY KEY, grant_id TEXT NOT NULL REFERENCES oauth_grants(id),
+                    kind TEXT NOT NULL CHECK(kind IN ('access','refresh')), expires INTEGER NOT NULL,
+                    used INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE INDEX oauth_tokens_grant ON oauth_tokens(grant_id);
+                CREATE TABLE mcp_requests (
+                    user_id TEXT NOT NULL REFERENCES users(id), client_id TEXT NOT NULL,
+                    request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+                    generation_id TEXT NOT NULL UNIQUE REFERENCES generations(id),
+                    PRIMARY KEY(user_id,client_id,request_id)
+                );
+                PRAGMA user_version = 2;
             `);
         }
     }).immediate();

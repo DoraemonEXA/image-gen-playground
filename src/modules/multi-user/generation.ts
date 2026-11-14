@@ -1,10 +1,6 @@
 import type { ApiUsage } from '../../lib/cost-utils';
-import {
-    MAX_EDIT_IMAGES,
-    SVG_WRITER_MODELS,
-    getStreamingBlockedReason,
-    type ImageOutputFormat
-} from '../../lib/models';
+import { getStreamingBlockedReason, type ImageOutputFormat, MAX_EDIT_IMAGES, SVG_WRITER_MODELS } from '../../lib/models';
+import type { User } from './accounts';
 import { balance, settle } from './billing';
 import { assert, config, isMultiUser } from './config';
 import { database } from './database';
@@ -16,10 +12,32 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ImagesResponse } from 'openai/resources/images';
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /** The only multi-user lifecycle the upstream generator needs to know. Null means legacy mode. */
 export function generationAccess(request: NextRequest) {
     if (!isMultiUser()) return null;
     const user = requireUser(request);
+    return generationForUser(user, () => {
+        requireUser(request);
+    });
+}
+
+/** Internal entry point. Callers must authenticate, and revalidate at admission. */
+export function generationForUser(user: User, revalidate: () => void, onAdmission?: (generationId: string) => void) {
     let id: string | undefined;
     let finished = false;
     let saved = 0;
@@ -28,7 +46,7 @@ export function generationAccess(request: NextRequest) {
         start(parameters: object) {
             assert(!id, 500, 'Generation already started.');
             // Recheck at admission after potentially slow multipart parsing.
-            requireUser(request);
+            revalidate();
             const params = parameters as Record<string, unknown>;
             if (params.stream) {
                 const reason = getStreamingBlockedReason(Number(params.n), params.output_format as ImageOutputFormat);
@@ -82,6 +100,8 @@ export function generationAccess(request: NextRequest) {
                     database()
                         .prepare('INSERT INTO generations(id,user_id,created,model,metadata) VALUES(?,?,?,?,?)')
                         .run(generationId, user.id, Date.now(), String(params.model), JSON.stringify(metadata));
+                    // The MCP idempotency record commits atomically with admission.
+                    onAdmission?.(generationId);
                 })
                 .immediate();
             id = generationId;

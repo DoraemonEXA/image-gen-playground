@@ -48,7 +48,10 @@ export function LoginScreen() {
                     try {
                         await api('auth/login', { username: fields.get('username'), code: fields.get('code') });
                         announceSessionChange();
-                        window.location.replace('/');
+                        const pending = new URLSearchParams(window.location.search).get('oauth_request');
+                        window.location.replace(
+                            pending && /^[A-Za-z0-9_-]{43}$/.test(pending) ? `/oauth/consent?request=${pending}` : '/'
+                        );
                     } catch (error) {
                         setError((error as Error).message);
                         setBusy(false);
